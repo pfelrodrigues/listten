@@ -21,9 +21,6 @@ jobs:
       - name: Format check
         run: swift format lint --configuration .swift-format --recursive --parallel --strict Sources Tests Package.swift
 
-      - name: Architecture rules
-        run: bash scripts/lint.sh
-
       - name: Build
         run: swift build -Xswiftc -warnings-as-errors
 

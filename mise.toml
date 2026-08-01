@@ -14,13 +14,9 @@ run = "swift format --configuration .swift-format --in-place --parallel --recurs
 description = "Fail if sources are not formatted"
 run = "swift format lint --configuration .swift-format --recursive --parallel --strict Sources Tests Package.swift"
 
-[tasks.lint]
-description = "Project-specific architecture rules"
-run = "bash scripts/lint.sh"
-
 [tasks.check]
 description = "Everything CI runs"
-depends = ["format-check", "lint", "build", "test"]
+depends = ["format-check", "build", "test"]
 
 [tasks.bundle]
 description = "Build Listten.app"

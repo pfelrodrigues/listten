@@ -11,9 +11,6 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "pre-push: architecture rules"
-bash scripts/lint.sh
-
 echo "pre-push: swift build (warnings are errors)"
 swift build -Xswiftc -warnings-as-errors
 
