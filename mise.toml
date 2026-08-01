@@ -1,10 +1,10 @@
 [tasks.build]
-description = "Build debug"
-run = "swift build"
+description = "Build debug, with warnings as errors like CI"
+run = "swift build -Xswiftc -warnings-as-errors"
 
 [tasks.test]
-description = "Run the test suite"
-run = "swift test"
+description = "Run the test suite, with warnings as errors like CI"
+run = "swift test -Xswiftc -warnings-as-errors"
 
 [tasks.format]
 description = "Format sources in place"
@@ -16,7 +16,7 @@ run = "swift format lint --configuration .swift-format --recursive --parallel --
 
 [tasks.check]
 description = "Everything CI runs"
-depends = ["format-check", "build", "test"]
+depends = ["format-check", "build", "test", "bundle"]
 
 [tasks.bundle]
 description = "Build Listten.app"
