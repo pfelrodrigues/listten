@@ -7,7 +7,7 @@ import Testing
 func armingStoresAndPrompts() async throws {
     let store = InMemorySessionStore()
     let prompts = RecordingPromptSpy()
-    let arm = ArmSession(sessions: store, prompt: prompts, clock: FixedClock())
+    let arm = ArmSession(sessions: store, prompt: prompts, clock: FixedTimeSource())
 
     let session = try await arm.callAsFunction()
 
@@ -19,7 +19,7 @@ func armingStoresAndPrompts() async throws {
 @Test("two sessions armed at the same instant get different ids")
 func idsDoNotCollide() async throws {
     let store = InMemorySessionStore()
-    let arm = ArmSession(sessions: store, prompt: RecordingPromptSpy(), clock: FixedClock())
+    let arm = ArmSession(sessions: store, prompt: RecordingPromptSpy(), clock: FixedTimeSource())
 
     let first = try await arm()
     let second = try await arm()
@@ -35,12 +35,12 @@ func idsSortByTime() async throws {
     let early = ArmSession(
         sessions: store,
         prompt: RecordingPromptSpy(),
-        clock: FixedClock(now: .init(timeIntervalSince1970: 0))
+        clock: FixedTimeSource(now: .init(timeIntervalSince1970: 0))
     )
     let late = ArmSession(
         sessions: store,
         prompt: RecordingPromptSpy(),
-        clock: FixedClock(now: .init(timeIntervalSince1970: 3600))
+        clock: FixedTimeSource(now: .init(timeIntervalSince1970: 3600))
     )
 
     #expect(try await early().id < late().id)

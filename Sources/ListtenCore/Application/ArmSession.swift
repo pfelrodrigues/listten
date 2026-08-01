@@ -5,9 +5,10 @@ import Foundation
 public struct ArmSession: Sendable {
     private let sessions: any SessionStoring
     private let prompt: any RecordingPrompting
-    private let clock: any Clock
+    private let clock: any TimeSource
 
-    public init(sessions: any SessionStoring, prompt: any RecordingPrompting, clock: any Clock) {
+    public init(sessions: any SessionStoring, prompt: any RecordingPrompting, clock: any TimeSource)
+    {
         self.sessions = sessions
         self.prompt = prompt
         self.clock = clock

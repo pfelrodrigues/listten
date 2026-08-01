@@ -4,7 +4,7 @@ import Testing
 @testable import ListtenCore
 
 private func armedSession(in store: InMemorySessionStore) async throws -> Session {
-    try await ArmSession(sessions: store, prompt: RecordingPromptSpy(), clock: FixedClock())()
+    try await ArmSession(sessions: store, prompt: RecordingPromptSpy(), clock: FixedTimeSource())()
 }
 
 @Test("confirming moves the session into recording and persists it")

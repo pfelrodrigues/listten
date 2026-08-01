@@ -12,7 +12,8 @@ public protocol RecordingPrompting: Sendable {
     func askWhetherToRecord(sessionID: String) async
 }
 
-/// Injected so tests do not depend on wall time.
-public protocol Clock: Sendable {
+/// Injected so tests do not depend on wall time. Not named `Clock`: that would
+/// shadow the standard library's protocol for anyone importing this module.
+public protocol TimeSource: Sendable {
     var now: Date { get }
 }
