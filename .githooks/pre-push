@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Build and test before pushing. Keeps broken commits off the remote.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if ! command -v swift >/dev/null 2>&1; then
+  echo "pre-push: swift not found; skipping" >&2
+  exit 0
+fi
+
+echo "pre-push: swift build"
+swift build
+
+echo "pre-push: swift test"
+swift test
+
+echo "pre-push: ok"

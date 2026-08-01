@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "lineLength": 100,
+  "indentation": {
+    "spaces": 4
+  },
+  "tabWidth": 4,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeEachArgument": true,
+  "lineBreakBeforeEachGenericRequirement": true,
+  "lineBreakAroundMultilineExpressionChainComponents": true,
+  "prioritizeKeepingFunctionOutputTogether": true,
+  "indentBlankLines": false,
+  "multiElementCollectionTrailingCommas": true,
+  "rules": {
+    "DontRepeatTypeInStaticProperties": false
+  }
+}
