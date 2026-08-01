@@ -14,7 +14,7 @@ actor InMemorySessionStore: SessionStoring {
     }
 
     func unfinished() async throws -> [Session] {
-        stored.values.filter { !$0.state.isTerminal }
+        stored.values.filter { !$0.state.isTerminal }.sorted { $0.id < $1.id }
     }
 }
 
