@@ -12,7 +12,7 @@ public enum SessionEvent: Sendable, CaseIterable {
 
 /// The lifecycle of one meeting. Transitions are explicit so an invalid one is
 /// an error rather than a silently wrong state.
-public enum SessionState: Sendable, Equatable, CaseIterable {
+public enum SessionState: String, Sendable, Equatable, CaseIterable, Codable {
     case armed
     case recording
     case recorded
