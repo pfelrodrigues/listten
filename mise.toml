@@ -1,0 +1,31 @@
+[tasks.build]
+description = "Build debug"
+run = "swift build"
+
+[tasks.test]
+description = "Run the test suite"
+run = "swift test"
+
+[tasks.format]
+description = "Format sources in place"
+run = "swift format --configuration .swift-format --in-place --parallel --recursive Sources Tests Package.swift"
+
+[tasks.format-check]
+description = "Fail if sources are not formatted"
+run = "swift format lint --configuration .swift-format --recursive --parallel --strict Sources Tests Package.swift"
+
+[tasks.lint]
+description = "Project-specific architecture rules"
+run = "bash scripts/lint.sh"
+
+[tasks.check]
+description = "Everything CI runs"
+depends = ["format-check", "lint", "build", "test"]
+
+[tasks.bundle]
+description = "Build Listten.app"
+run = "bash scripts/bundle.sh"
+
+[tasks.hooks]
+description = "Point git at .githooks"
+run = "git config core.hooksPath .githooks"

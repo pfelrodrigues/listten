@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Format staged Swift with Apple `swift format`, then lint the tree strictly.
+# Compatible with macOS /bin/bash 3.2.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if ! command -v swift >/dev/null 2>&1; then
+  echo "pre-commit: swift not found on PATH (need Xcode CLT or Xcode)." >&2
+  exit 1
+fi
+
+if ! swift format --version >/dev/null 2>&1; then
+  echo "pre-commit: 'swift format' unavailable. Update Command Line Tools / Xcode." >&2
+  exit 1
+fi
+
+cfg=".swift-format"
+staged_list="$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.swift$' || true)"
+if [[ -z "$staged_list" ]]; then
+  exit 0
+fi
+
+# shellcheck disable=SC2086
+set -- $staged_list
+
+echo "pre-commit: swift format ($# file(s))"
+swift format --configuration "$cfg" --in-place --parallel "$@"
+git add -- "$@"
+
+echo "pre-commit: swift format lint (strict)"
+swift format lint --configuration "$cfg" --recursive --parallel --strict Sources Tests Package.swift
+
+echo "pre-commit: ok"

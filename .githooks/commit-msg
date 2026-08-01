@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Enforce Conventional Commits on the subject line.
+# Spec: https://www.conventionalcommits.org/
+# Compatible with macOS /bin/bash 3.2.
+set -euo pipefail
+
+msg_file="${1:-}"
+if [[ -z "$msg_file" || ! -f "$msg_file" ]]; then
+  echo "commit-msg: missing commit message file" >&2
+  exit 1
+fi
+
+# First non-comment, non-empty line is the subject.
+subject=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+  case "$line" in
+    \#*) continue ;;
+  esac
+  if [[ -n "$line" ]]; then
+    subject="$line"
+    break
+  fi
+done <"$msg_file"
+
+if [[ -z "$subject" ]]; then
+  echo "commit-msg: empty commit message" >&2
+  exit 1
+fi
+
+# Allow merge / revert machinery and fixup/squash workflow commits.
+case "$subject" in
+  Merge\ *|Revert\ *|fixup!|squash!)
+    exit 0
+    ;;
+esac
+
+# type(scope)!: description
+# type: description
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?(!)?: .+'
+
+if [[ ! "$subject" =~ $pattern ]]; then
+  cat >&2 <<'EOF'
+commit-msg: subject must use Conventional Commits:
+
+  <type>[optional scope][!]: <description>
+
+Types: feat fix docs style refactor perf test build ci chore revert
+Examples:
+  feat(calendar): list calendars with uid and source
+  fix(mail): refuse Gmail archive no-ops
+  test: cover config calendars init
+  chore: add commit-msg conventional hook
+
+See CONTRIBUTING.md
+EOF
+  exit 1
+fi
+
+# Soft length hint (not a hard fail above 72; hard fail above 100).
+len=${#subject}
+if (( len > 100 )); then
+  echo "commit-msg: subject too long ($len > 100 chars)" >&2
+  exit 1
+fi
+
+exit 0
