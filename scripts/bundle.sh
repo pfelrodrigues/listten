@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds Listten.app from the SwiftPM binary. SwiftPM does not produce app
-# bundles, and UserNotifications requires a real bundle to work.
+# bundles, and both UserNotifications and TCC grants need a bundle identity.
 set -euo pipefail
 
 CONFIG="${1:-debug}"
