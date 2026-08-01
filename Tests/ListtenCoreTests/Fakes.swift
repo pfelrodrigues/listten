@@ -26,6 +26,6 @@ actor RecordingPromptSpy: RecordingPrompting {
     }
 }
 
-struct FixedClock: Clock {
+struct FixedTimeSource: TimeSource {
     var now = Date(timeIntervalSince1970: 0)
 }
