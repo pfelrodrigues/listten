@@ -16,7 +16,7 @@ run = "swift format lint --configuration .swift-format --recursive --parallel --
 
 [tasks.check]
 description = "Everything CI runs"
-depends = ["format-check", "build", "test", "bundle"]
+depends = ["format-check", "build", "test", "bundle release"]
 
 [tasks.bundle]
 description = "Build Listten.app"

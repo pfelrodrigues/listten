@@ -98,6 +98,38 @@ func domainImportsOnlyFoundation() throws {
     }
 }
 
+/// Substring matching would flag `retry?` in a comment and `entry?` in an
+/// optional pattern, so the keyword has to start on a boundary.
+private func discardsErrors(in source: String) -> Bool {
+    var index = source.startIndex
+    while let found = source.range(of: "try?", range: index..<source.endIndex) {
+        let precedes = found.lowerBound == source.startIndex
+        if precedes || !isIdentifierCharacter(source[source.index(before: found.lowerBound)]) {
+            return true
+        }
+        index = found.upperBound
+    }
+    return false
+}
+
+private func isIdentifierCharacter(_ character: Character) -> Bool {
+    character.isLetter || character.isNumber || character == "_"
+}
+
+@Test(
+    "try? is recognised as a keyword rather than as four characters",
+    arguments: [
+        ("try? load()", true),
+        ("let session = try? load()", true),
+        ("// should a failed lookup retry? not for now", false),
+        ("if case let entry? = stored { }", false),
+        ("try await load()", false),
+    ]
+)
+func recognisesDiscardedErrors(source: String, discards: Bool) {
+    #expect(discardsErrors(in: source) == discards)
+}
+
 /// Scoped to the whole core rather than to the directories where losing a
 /// recording is unrecoverable: naming those explicitly meant the rule stopped
 /// covering anything the moment a file landed somewhere else.
@@ -105,7 +137,7 @@ func domainImportsOnlyFoundation() throws {
 func noSilentErrorsInTheCore() throws {
     for file in try swiftFiles(in: "ListtenCore") {
         let source = try String(contentsOf: file, encoding: .utf8)
-        #expect(!source.contains("try?"), "\(file.lastPathComponent) uses try?")
+        #expect(!discardsErrors(in: source), "\(file.lastPathComponent) uses try?")
     }
 }
 
