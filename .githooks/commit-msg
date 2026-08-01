@@ -51,7 +51,7 @@ Examples:
   test: cover config calendars init
   chore: add commit-msg conventional hook
 
-See CONTRIBUTING.md
+See AGENTS.md
 EOF
   exit 1
 fi
