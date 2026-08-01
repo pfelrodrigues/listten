@@ -35,7 +35,7 @@ ties grants to bundle identity. Use `scripts/bundle.sh` when testing those.
 Three rules are enforced by the test suite rather than by convention:
 
 - `Domain` imports nothing but `Foundation`
-- `try?` is not allowed where losing a recording is unrecoverable
+- `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
 
 Warnings are errors in CI and in the pre-push hook.
