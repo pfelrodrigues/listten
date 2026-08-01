@@ -4,6 +4,10 @@ import Foundation
 public protocol SessionStoring: Sendable {
     func save(_ session: Session) async throws
     func load(id: String) async throws -> Session?
+
+    /// Ordered by id, which sorts chronologically. An implementation free to
+    /// return any order would make recovery depend on storage internals, and a
+    /// fake that happened to be tidier than production would hide it.
     func unfinished() async throws -> [Session]
 }
 
