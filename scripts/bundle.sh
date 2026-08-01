@@ -34,6 +34,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1
+codesign --force --sign - --timestamp=none "$APP"
+codesign --verify --strict "$APP"
 
 echo "$APP"

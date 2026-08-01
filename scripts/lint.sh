@@ -11,25 +11,31 @@ report() {
   fail=1
 }
 
-# 1. Domain must not depend on anything but Foundation.
+# grep exits 1 when it finds nothing and 2 on real errors. Only the first is fine.
+search() {
+  local out status
+  out="$(grep "$@" || status=$?; exit ${status:-0})" || status=$?
+  if [ "${status:-0}" -gt 1 ]; then
+    echo "lint: grep failed on: $*" >&2
+    exit 2
+  fi
+  printf '%s' "$out"
+}
+
 if [ -d Sources/ListtenCore/Domain ]; then
-  bad="$(grep -rn '^import ' Sources/ListtenCore/Domain --include='*.swift' \
-    | grep -vE 'import Foundation$' || true)"
+  bad="$(search -rn '^import ' Sources/ListtenCore/Domain --include='*.swift' | grep -vE 'import Foundation$' || true)"
   [ -n "$bad" ] && report "Domain may only import Foundation:
 $bad"
 fi
 
-# 2. No silent error discarding where losing a recording is unrecoverable.
 for dir in Sources/ListtenCore/Adapters/Capture Sources/ListtenCore/Adapters/Persistence; do
   [ -d "$dir" ] || continue
-  bad="$(grep -rn 'try?' "$dir" --include='*.swift' || true)"
+  bad="$(search -rn 'try?' "$dir" --include='*.swift')"
   [ -n "$bad" ] && report "'try?' is not allowed in $dir:
 $bad"
 done
 
-# 3. The CLI target must reach the domain only through ListtenCore.
-bad="$(grep -rn '^import ' Sources/listten --include='*.swift' \
-  | grep -vE 'import (Foundation|AppKit|SwiftUI|UserNotifications|ListtenCore)$' || true)"
+bad="$(search -rn '^import ' Sources/listten --include='*.swift' | grep -vE 'import (Foundation|AppKit|SwiftUI|UserNotifications|ListtenCore)$' || true)"
 [ -n "$bad" ] && report "unexpected import in the CLI target:
 $bad"
 
