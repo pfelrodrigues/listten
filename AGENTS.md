@@ -25,8 +25,8 @@ If something can fail, its failure has to be visible.
 
 - Warnings are errors in CI and in the pre-push hook.
 - Do not redirect output of a command that can fail to `/dev/null`.
-- `try?` throws away the error. Where losing a recording is unrecoverable, it is
-  banned outright and the test suite enforces it.
+- `try?` throws away the error. It is banned throughout `ListtenCore` and the
+  test suite enforces it.
 
 ## Architecture
 
@@ -41,8 +41,12 @@ Three rules are enforced by tests rather than by convention, in
 `ArchitectureTests.swift`:
 
 - `Domain` imports nothing but `Foundation`
-- `try?` is not allowed in capture or persistence
+- `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
+
+A rule that scans a directory which is not there fails, rather than reporting no
+violations. A guard that quietly stops covering anything is worse than no guard,
+because the green tick still claims it holds.
 
 If you need to break one, change the rule and its test deliberately, in its own
 commit, with the reason in the message.
