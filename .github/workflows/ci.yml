@@ -28,7 +28,7 @@ jobs:
         run: swift build -Xswiftc -warnings-as-errors
 
       - name: Test
-        run: swift test
+        run: swift test -Xswiftc -warnings-as-errors
 
       - name: Bundle
         run: bash scripts/bundle.sh release
