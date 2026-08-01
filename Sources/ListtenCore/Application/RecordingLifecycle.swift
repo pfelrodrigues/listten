@@ -38,8 +38,7 @@ public struct StopRecording: Sendable {
         guard let session = try await sessions.load(id: sessionID) else {
             throw SessionNotFound(id: sessionID)
         }
-        let event: SessionEvent = session.duration < minimumDuration ? .discard : .stopRecording
-        let stopped = try session.applying(event)
+        let stopped = try session.stopping(minimumDuration: minimumDuration)
         try await sessions.save(stopped)
         return stopped
     }

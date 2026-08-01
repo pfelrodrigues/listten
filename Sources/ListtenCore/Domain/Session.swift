@@ -33,6 +33,12 @@ public struct Session: Sendable, Equatable, Codable {
         return copy
     }
 
+    /// Whether a recording was long enough to be a meeting is a rule about the
+    /// session, so it lives here rather than in whichever caller ends it.
+    public func stopping(minimumDuration: TimeInterval) throws -> Session {
+        try applying(duration < minimumDuration ? .discard : .stopRecording)
+    }
+
     /// Transitions delegate to the state machine, so the aggregate has a single
     /// definition of what may follow what.
     public func applying(_ event: SessionEvent) throws -> Session {
