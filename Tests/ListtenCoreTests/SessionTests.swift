@@ -44,6 +44,24 @@ func finalizedSessionRefusesAudio() throws {
     }
 }
 
+@Test("a recording shorter than the minimum is discarded when it stops")
+func stoppingDiscardsWhatIsTooShort() throws {
+    var session = try Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
+        .applying(.confirm)
+    session = try session.appending(Segment(index: 0, track: .microphone, start: 0, duration: 20))
+
+    #expect(try session.stopping(minimumDuration: 60).state == .discarded)
+}
+
+@Test("a recording that reaches the minimum moves on to processing when it stops")
+func stoppingKeepsWhatIsLongEnough() throws {
+    var session = try Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
+        .applying(.confirm)
+    session = try session.appending(Segment(index: 0, track: .microphone, start: 0, duration: 90))
+
+    #expect(try session.stopping(minimumDuration: 60).state == .recorded)
+}
+
 @Test("an invalid transition leaves the session untouched")
 func invalidTransitionIsRefused() throws {
     let session = Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
