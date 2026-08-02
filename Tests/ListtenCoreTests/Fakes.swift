@@ -30,16 +30,25 @@ actor RecordingPromptSpy: RecordingPrompting {
 /// same interval as real capture, so the pipeline can be driven without audio
 /// hardware or permissions.
 actor FakeAudioCapture: AudioCapturing {
+    private enum State {
+        case idle, running, stopped
+    }
+
     private let length: TimeInterval
     private let rotateEvery: TimeInterval
     private var closed: TimeInterval = 0
+    private var state = State.idle
 
     init(length: TimeInterval, rotateEvery: TimeInterval) {
+        precondition(rotateEvery > 0, "a rotation of zero never advances")
         self.length = length
         self.rotateEvery = rotateEvery
     }
 
     func start() async throws -> AsyncStream<Segment> {
+        guard state == .idle else { throw CaptureAlreadyStarted() }
+        state = .running
+
         var rotated: [Segment] = []
         var index = 0
         while closed + rotateEvery <= length {
@@ -54,6 +63,9 @@ actor FakeAudioCapture: AudioCapturing {
     }
 
     func stop() async throws -> [Segment] {
+        guard state == .running else { return [] }
+        state = .stopped
+
         let remaining = length - closed
         guard remaining > 0 else { return [] }
         let partials = segments(
