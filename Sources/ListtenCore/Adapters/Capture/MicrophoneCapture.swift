@@ -6,9 +6,7 @@ import Foundation
 /// The stamp is the host time AVFoundation reports for the buffer, not the
 /// instant this process happened to see it, so the microphone and the system
 /// tap describe the same conversation on one timeline.
-public actor MicrophoneCapture {
-    public struct AlreadyRunning: Error, Equatable {}
-
+public actor MicrophoneCapture: AudioSource {
     private let engine = AVAudioEngine()
     private var continuation: AsyncStream<CapturedAudio>.Continuation?
     private var configurationObserver: (any NSObjectProtocol)?
@@ -16,7 +14,7 @@ public actor MicrophoneCapture {
     public init() {}
 
     public func start() throws -> AsyncStream<CapturedAudio> {
-        guard continuation == nil else { throw AlreadyRunning() }
+        guard continuation == nil else { throw CaptureAlreadyStarted() }
 
         let (stream, continuation) = AsyncStream<CapturedAudio>.makeStream()
         self.continuation = continuation
