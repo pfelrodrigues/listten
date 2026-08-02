@@ -11,15 +11,23 @@ public protocol SessionStoring: Sendable {
     func unfinished() async throws -> [Session]
 }
 
+public struct CaptureAlreadyStarted: Error, Equatable {}
+
 /// Delivers audio as finalized segments, both tracks stamped on one clock so
 /// they can be interleaved later.
 public protocol AudioCapturing: Sendable {
-    /// Segments as they close on rotation. The stream finishes when capture ends.
+    /// Segments as they close on rotation. The stream finishes when capture
+    /// ends. Throws if this capture was already started: the same audio cannot
+    /// be captured twice, and answering with an empty stream would turn a
+    /// caller's mistake into a recording that went missing quietly.
     func start() async throws -> AsyncStream<Segment>
 
     /// Finalizes whatever is still open, so its audio is not lost. Both tracks
     /// are open when capture ends, so this returns a partial segment for each.
     /// Finalizing belongs to the contract rather than to an adapter's memory.
+    ///
+    /// Idempotent: stopping a capture that never started, or stopping one
+    /// twice, reports nothing rather than audio that was never heard.
     func stop() async throws -> [Segment]
 }
 
