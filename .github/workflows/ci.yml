@@ -24,8 +24,8 @@ jobs:
       - name: Build
         run: swift build -Xswiftc -warnings-as-errors
 
-      - name: Test
-        run: swift test -Xswiftc -warnings-as-errors
+      - name: Test and gate coverage per layer
+        run: bash scripts/coverage.sh
 
       - name: Bundle
         run: bash scripts/bundle.sh release

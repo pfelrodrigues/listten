@@ -23,7 +23,7 @@ Two failure modes worth naming, because both have already happened here:
 This covers compiler warnings, suppressed command output and discarded errors.
 If something can fail, its failure has to be visible.
 
-- Warnings are errors in CI and in the pre-push hook.
+- Warnings are errors in CI, in the pre-push hook and in `mise run check`.
 - Do not redirect output of a command that can fail to `/dev/null`.
 - `try?` throws away the error. It is banned throughout `ListtenCore` and the
   test suite enforces it.
@@ -61,6 +61,15 @@ CoreAudio produces mocks of Apple frameworks, which test the mock.
 | `Domain` | 100% of lines |
 | `Application` | 100% of lines |
 | `Adapters` | no line target, covered by integration tests |
+| Overall | 90% floor, as a consequence rather than a goal |
+
+`scripts/coverage.sh` enforces this and runs in CI. It fails when a layer drops
+below its target, and equally when a layer matches no file at all, since a
+measurement of nothing must never read as a pass.
+
+Two numbers it deliberately does not print: a single figure mixing sources with
+test files, which flatters, and anything for `Sources/listten`, which the test
+target does not link and therefore does not measure.
 
 A test that exists only to close a coverage gap is a smell, not a solution.
 
@@ -75,7 +84,7 @@ A test that exists only to close a coverage gap is a smell, not a solution.
 ## Before committing
 
 ```sh
-mise run check     # format, build, test
+mise run check     # format, build, test with coverage, bundle — what CI runs
 ```
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org).
