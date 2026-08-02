@@ -130,6 +130,21 @@ func recognisesDiscardedErrors(source: String, discards: Bool) {
     #expect(discardsErrors(in: source) == discards)
 }
 
+/// The coverage gate targets Domain and Application by name and exempts
+/// Adapters, so a directory outside all three would carry no target at all.
+/// A file at the root of the core is fine: it is visible in any listing, while
+/// a whole directory is what slips past unnoticed.
+@Test("every directory in the core is a layer the rules know about")
+func coreDirectoriesAreKnownLayers() throws {
+    let layers = ["Domain", "Application", "Ports", "Adapters"]
+    for file in try swiftFiles(in: "ListtenCore") {
+        let relative = file.path.components(separatedBy: "/ListtenCore/").last ?? ""
+        guard relative.contains("/") else { continue }
+        let directory = String(relative.prefix(while: { $0 != "/" }))
+        #expect(layers.contains(directory), "\(directory) is not one of \(layers)")
+    }
+}
+
 /// Scoped to the whole core rather than to the directories where losing a
 /// recording is unrecoverable: naming those explicitly meant the rule stopped
 /// covering anything the moment a file landed somewhere else.
