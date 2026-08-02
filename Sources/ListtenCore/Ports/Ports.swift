@@ -11,6 +11,18 @@ public protocol SessionStoring: Sendable {
     func unfinished() async throws -> [Session]
 }
 
+/// Delivers audio as finalized segments, both tracks stamped on one clock so
+/// they can be interleaved later.
+public protocol AudioCapturing: Sendable {
+    /// Segments as they close on rotation. The stream finishes when capture ends.
+    func start() async throws -> AsyncStream<Segment>
+
+    /// Finalizes whatever is still open, so its audio is not lost. Both tracks
+    /// are open when capture ends, so this returns a partial segment for each.
+    /// Finalizing belongs to the contract rather than to an adapter's memory.
+    func stop() async throws -> [Segment]
+}
+
 /// Asks the user whether to record. Nothing reaches disk before the answer.
 public protocol RecordingPrompting: Sendable {
     func askWhetherToRecord(sessionID: String) async
