@@ -33,16 +33,22 @@ ties grants to bundle identity. Use `scripts/bundle.sh` when testing those.
 
 ### Architecture rules
 
-Three rules are enforced by the test suite rather than by convention:
+Four rules are enforced by the test suite rather than by convention:
 
 - `Domain` imports nothing but `Foundation`
 - `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
+- every directory in the core is one of the four layers
 
 Warnings are errors in CI, in the pre-push hook and in `mise run check`.
 
 Coverage is gated per layer: `Domain` and `Application` at 100% of lines,
-adapters by integration rather than by a line target.
+adapters reported but not gated, since they are covered by integration against
+real devices and files.
+
+`listten capture [seconds]` records from the microphone and reports what
+arrived. It needs microphone permission, so it is a manual check rather than a
+CI one.
 
 ```sh
 mise run hooks     # enable the git hooks

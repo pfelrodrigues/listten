@@ -37,12 +37,13 @@ about AppKit or the CLI.
 Adapters  →  Ports  →  Application  →  Domain
 ```
 
-Three rules are enforced by tests rather than by convention, in
+Four rules are enforced by tests rather than by convention, in
 `ArchitectureTests.swift`:
 
 - `Domain` imports nothing but `Foundation`
 - `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
+- every directory in the core is one of the four layers
 
 A rule that scans a directory which is not there fails, rather than reporting no
 violations. A guard that quietly stops covering anything is worse than no guard,
@@ -60,16 +61,21 @@ CoreAudio produces mocks of Apple frameworks, which test the mock.
 |---|---|
 | `Domain` | 100% of lines |
 | `Application` | 100% of lines |
-| `Adapters` | no line target, covered by integration tests |
-| Overall | 90% floor, as a consequence rather than a goal |
+| `Adapters` | no line target, reported only, covered by integration tests |
 
 `scripts/coverage.sh` enforces this and runs in CI. It fails when a layer drops
 below its target, and equally when a layer matches no file at all, since a
 measurement of nothing must never read as a pass.
 
-Two numbers it deliberately does not print: a single figure mixing sources with
-test files, which flatters, and anything for `Sources/listten`, which the test
-target does not link and therefore does not measure.
+Three numbers it deliberately does not print: a figure mixing sources with test
+files, which flatters; anything for `Sources/listten`, which the test target
+does not link; and an overall percentage, which with Domain and Application
+pinned at 100% and adapters exempt would only measure how much adapter code
+exists.
+
+What kept an unguarded directory honest was that overall figure, so a test does
+it instead: every directory under `Sources/ListtenCore` has to be one of the
+four layers above.
 
 A test that exists only to close a coverage gap is a smell, not a solution.
 

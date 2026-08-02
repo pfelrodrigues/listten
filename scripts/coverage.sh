@@ -7,8 +7,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-GLOBAL_FLOOR=90
-
 if ! command -v jq >/dev/null 2>&1; then
   echo "coverage: jq is required to read the coverage report" >&2
   exit 1
@@ -61,20 +59,16 @@ for layer in Domain Application; do
   fi
 done
 
-read -r total covered < <(
-  jq -e -r '
-    [.data[0].files[] | select(.filename | contains("/Sources/"))]
-    | select(length > 0)
-    | "\(map(.summary.lines.count) | add) \(map(.summary.lines.covered) | add)"
-  ' "$report"
-)
-percent=$((covered * 100 / total))
-echo "Sources overall: $covered/$total lines (${percent}%, floor ${GLOBAL_FLOOR}%)"
-echo "Adapters carry no line target, and Sources/listten is not measured at all."
-
-if [[ "$percent" -lt "$GLOBAL_FLOOR" ]]; then
-  echo "coverage: overall ${percent}% is below the ${GLOBAL_FLOOR}% floor" >&2
-  failed=1
+# Reported, never gated. Adapters are exercised against real devices and files,
+# which CI has neither of. There is deliberately no overall percentage: with
+# Domain and Application pinned at 100% and adapters excluded by policy, an
+# overall figure only measures how much adapter code exists.
+if read -r total covered < <(layer_lines Adapters); then
+  echo "Adapters: $covered/$total lines, no target — covered by integration"
+else
+  echo "Adapters: no code yet"
 fi
+
+echo "Sources/listten is not measured: the test target does not link it."
 
 exit "$failed"
