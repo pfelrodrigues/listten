@@ -13,8 +13,9 @@ and writes markdown.
 ## Development
 
 ```sh
-mise run check     # format, build, test
+mise run check     # what CI runs: format, build, test with coverage, bundle
 mise run test
+mise run coverage  # test suite plus the per-layer coverage gate
 mise run bundle    # assemble Listten.app
 ```
 
@@ -38,7 +39,10 @@ Three rules are enforced by the test suite rather than by convention:
 - `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
 
-Warnings are errors in CI and in the pre-push hook.
+Warnings are errors in CI, in the pre-push hook and in `mise run check`.
+
+Coverage is gated per layer: `Domain` and `Application` at 100% of lines,
+adapters by integration rather than by a line target.
 
 ```sh
 mise run hooks     # enable the git hooks

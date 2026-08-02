@@ -14,9 +14,20 @@ run = "swift format --configuration .swift-format --in-place --parallel --recurs
 description = "Fail if sources are not formatted"
 run = "swift format lint --configuration .swift-format --recursive --parallel --strict Sources Tests Package.swift"
 
+[tasks.coverage]
+description = "Run the suite and gate coverage per layer"
+run = "bash scripts/coverage.sh"
+
+# Sequential on purpose: these share .build, and a rebuild landing between the
+# test run and the coverage report makes llvm-cov fail to read it.
 [tasks.check]
-description = "Everything CI runs"
-depends = ["format-check", "build", "test", "bundle release"]
+description = "Everything CI runs, in the same order"
+run = [
+  "mise run format-check",
+  "mise run build",
+  "mise run coverage",
+  "mise run bundle release",
+]
 
 [tasks.bundle]
 description = "Build Listten.app"
