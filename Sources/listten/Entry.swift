@@ -39,7 +39,7 @@ enum Entry {
 
         print("Capturing for \(seconds)s. Grant microphone access if macOS asks.")
         let stopper = Task {
-            try? await Task.sleep(for: .seconds(seconds))
+            try await Task.sleep(for: .seconds(seconds))
             await microphone.stop()
         }
 

@@ -79,6 +79,22 @@ four layers above.
 
 A test that exists only to close a coverage gap is a smell, not a solution.
 
+## Fakes answer to the same contract as the real thing
+
+A fake that is stricter, tidier or simply different from production hides the
+difference until the adapter lands. It has happened three times here, so the
+rules a port promises are written once as a contract function and run against
+every implementation.
+
+Tests needing a real device are opt-in, since CI has none:
+
+```sh
+LISTTEN_AUDIO_HARDWARE=1 mise run test
+```
+
+Run that before merging anything that touches capture. A contract that only ever
+meets the fake proves nothing about the device.
+
 ## Style
 
 - English everywhere: code, comments, commit messages, CLI output.

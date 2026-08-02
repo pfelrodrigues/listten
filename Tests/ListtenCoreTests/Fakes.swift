@@ -26,6 +26,47 @@ actor RecordingPromptSpy: RecordingPrompting {
     }
 }
 
+/// A device that is not there: delivers a fixed number of buffers and stops.
+/// Held to the same contract as the microphone by `verifyAudioSourceContract`.
+actor FakeAudioSource: AudioSource {
+    private enum State {
+        case idle, running, stopped
+    }
+
+    private let buffers: Int
+    private let sampleRate: Double
+    private var state = State.idle
+
+    init(buffers: Int, sampleRate: Double = 48000) {
+        self.buffers = buffers
+        self.sampleRate = sampleRate
+    }
+
+    func start() async throws -> AsyncStream<CapturedAudio> {
+        guard state == .idle else { throw CaptureAlreadyStarted() }
+        state = .running
+
+        let frames = Int(sampleRate / 10)
+        let audio = (0..<buffers)
+            .map { index in
+                CapturedAudio(
+                    hostTime: 1000 + Double(index) / 10,
+                    sampleRate: sampleRate,
+                    samples: Array(repeating: 0.25, count: frames)
+                )
+            }
+        return AsyncStream { continuation in
+            audio.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+    }
+
+    func stop() async {
+        guard state == .running else { return }
+        state = .stopped
+    }
+}
+
 /// Replays a recording of a known length as if it were live, rotating on the
 /// same interval as real capture, so the pipeline can be driven without audio
 /// hardware or permissions.

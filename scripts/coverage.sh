@@ -63,8 +63,14 @@ done
 # which CI has neither of. There is deliberately no overall percentage: with
 # Domain and Application pinned at 100% and adapters excluded by policy, an
 # overall figure only measures how much adapter code exists.
+# Even here, where the number is a report rather than a gate, "nothing measured"
+# has to be told apart from "nothing to measure".
+adapter_sources="$(find Sources/ListtenCore/Adapters -name '*.swift' | wc -l | tr -d ' ')"
 if read -r total covered < <(layer_lines Adapters); then
   echo "Adapters: $covered/$total lines, no target — covered by integration"
+elif [[ "$adapter_sources" -gt 0 ]]; then
+  echo "coverage: $adapter_sources adapter source(s) exist but none was measured" >&2
+  failed=1
 else
   echo "Adapters: no code yet"
 fi

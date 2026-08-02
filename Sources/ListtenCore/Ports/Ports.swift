@@ -13,6 +13,19 @@ public protocol SessionStoring: Sendable {
 
 public struct CaptureAlreadyStarted: Error, Equatable {}
 
+/// One audio device, delivering buffers as it produces them. The microphone and
+/// the system tap are two of these; turning buffers into rotated segments on
+/// disk is what `AudioCapturing` does with them.
+public protocol AudioSource: Sendable {
+    /// Buffers stamped on the machine clock, so two sources describe one
+    /// timeline. Throws if this source was already started.
+    func start() async throws -> AsyncStream<CapturedAudio>
+
+    /// Idempotent, like `AudioCapturing.stop()`: stopping a source that never
+    /// started, or stopping one twice, is not an error.
+    func stop() async
+}
+
 /// Delivers audio as finalized segments, both tracks stamped on one clock so
 /// they can be interleaved later.
 public protocol AudioCapturing: Sendable {
