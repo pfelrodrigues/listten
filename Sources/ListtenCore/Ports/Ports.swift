@@ -30,6 +30,25 @@ public struct UnfinishedSessions: Sendable, Equatable {
     }
 }
 
+/// Where progress is written as it happens, one log per session: a step records
+/// its intent before it acts and its completion once it has, so a resumed run
+/// reads the pair rather than guessing from the state which step it stopped in.
+///
+/// Held to these by `verifyProgressLoggingContract`:
+///
+/// - Checkpoints come back for the session they were written for, in the order
+///   they were appended. The log is the chronology, and one session's steps are
+///   never another's.
+/// - A session that never logged holds no checkpoints. Not reaching the first
+///   step is how every session starts, not a failure.
+/// - The first append creates the log, so progress can be recorded for a session
+///   whose own state is not saved yet: the intent is written before the work
+///   that would save it.
+public protocol ProgressLogging: Sendable {
+    func append(_ checkpoint: Checkpoint, for sessionID: String) async throws
+    func checkpoints(for sessionID: String) async throws -> [Checkpoint]
+}
+
 public struct CaptureAlreadyStarted: Error, Equatable {}
 
 /// One audio device, delivering buffers as it produces them. The microphone and
