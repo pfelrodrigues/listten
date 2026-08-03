@@ -34,6 +34,24 @@ public actor MicrophoneCapture: AudioSource {
 
     public init() {}
 
+    public struct AccessDenied: Error, Equatable {}
+
+    /// Asked for before anything touches the engine, because reaching for the
+    /// input node blocks until the system has an answer — and on a machine that
+    /// cannot show the prompt it never gets one, which hung a recording for as
+    /// long as anyone let it. Asking outright turns a hang into a question, and
+    /// a refusal into an error somebody can read.
+    private static func ensureAccess() async throws {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return
+        case .notDetermined:
+            guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AccessDenied() }
+        default:
+            throw AccessDenied()
+        }
+    }
+
     /// Buffers the audio thread had to throw away because the drain fell
     /// behind. Non-zero means audio is missing from the recording. It survives
     /// stopping, since the caller only asks once the stream has ended.
@@ -44,8 +62,9 @@ public actor MicrophoneCapture: AudioSource {
     /// the recording has gaps that were recovered rather than lost.
     public var restarts: Int { totalRestarts }
 
-    public func start() throws -> AsyncStream<CapturedAudio> {
+    public func start() async throws -> AsyncStream<CapturedAudio> {
         guard continuation == nil else { throw CaptureAlreadyStarted() }
+        try await Self.ensureAccess()
 
         let ring = CaptureRing(slots: Self.slots, framesPerSlot: Self.framesPerSlot)
         self.ring = ring
