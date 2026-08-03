@@ -139,7 +139,7 @@ func hangingHookIsStoppedAndTheNoteSurvives() async throws {
 
     let wired = try wire(
         in: root,
-        hook: "touch \"$1/hook-ran\"\ntrap '' TERM\nsleep 30\n",
+        hook: "trap '' TERM\nsleep 30\n",
         timeout: .seconds(2)
     )
 
@@ -147,12 +147,11 @@ func hangingHookIsStoppedAndTheNoteSurvives() async throws {
     let location = try await wired.writer.write(meeting, for: "alpha")
     let took = ContinuousClock.now - started
 
-    #expect(
-        FileManager.default.fileExists(
-            atPath: wired.sessionDirectory("alpha").appending(path: "hook-ran").path
-        ),
-        "the hook never ran, so the timeout was never what returned"
-    )
+    // No assertion that the hook reached its first command. That raced a
+    // process launch against the 2s timeout and failed roughly once in four
+    // full runs. That hooks run at all is settled deterministically by
+    // "the hook sees the finished note" and by the failing-hook test, so this
+    // one only has to say that a hanging hook is stopped.
     #expect(took < .seconds(6), "the write waited \(took) on a hook with a 2s timeout")
     #expect(wired.outcomes().map(\.result) == [.timedOut])
     #expect(contents(of: location.delivered)?.contains(meeting.summary) == true)
