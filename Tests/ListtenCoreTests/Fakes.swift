@@ -128,7 +128,7 @@ actor FakeAudioCapture: AudioCapturing {
 
         var rotated: [Segment] = []
         while closed + rotateEvery <= length {
-            rotated += segments(index: rotations, start: closed, duration: rotateEvery)
+            rotated += try segments(index: rotations, start: closed, duration: rotateEvery)
             rotations += 1
         }
         return AsyncStream { continuation in
@@ -144,13 +144,19 @@ actor FakeAudioCapture: AudioCapturing {
         let remaining = length - closed
         guard remaining > 0 else { return [] }
         // The next index, not one recomputed from time: the last rotation already used its own.
-        return segments(index: rotations, start: closed, duration: remaining)
+        return try segments(index: rotations, start: closed, duration: remaining)
     }
 
     /// Both tracks close together, on the same instants.
-    private func segments(index: Int, start: TimeInterval, duration: TimeInterval) -> [Segment] {
-        Track.allCases.map {
-            Segment(index: index, track: $0, start: start, duration: duration)
+    private func segments(
+        index: Int,
+        start: TimeInterval,
+        duration: TimeInterval
+    ) throws
+        -> [Segment]
+    {
+        try Track.allCases.map {
+            try Segment(index: index, track: $0, start: start, duration: duration)
         }
     }
 }

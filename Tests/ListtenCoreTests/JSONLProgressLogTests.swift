@@ -30,19 +30,21 @@ private func encoded(_ checkpoint: Checkpoint) throws -> String {
     String(decoding: try JSONEncoder().encode(checkpoint), as: UTF8.self)
 }
 
-private let closed = Checkpoint.segmentClosed(
-    segment: Segment(index: 0, track: .microphone, start: 0, duration: 30)
-)
+private var closed: Checkpoint {
+    get throws {
+        .segmentClosed(segment: try Segment(index: 0, track: .microphone, start: 0, duration: 30))
+    }
+}
 private let transcribed = Checkpoint.chunkTranscribed(index: 0)
 
 @Test("checkpoints come back in the order they were appended")
 func checkpointsComeBackInOrder() throws {
     try withTemporaryLog { log, _ in
-        try log.append(closed)
+        try log.append(try closed)
         try log.append(transcribed)
 
         let read = try log.checkpoints()
-        #expect(read == [closed, transcribed])
+        #expect(read == [try closed, transcribed])
     }
 }
 
@@ -67,13 +69,13 @@ func emptyFileHoldsNoCheckpoints() throws {
 @Test("a line torn by a crash mid-append is dropped, and the lines before it survive")
 func tornLastLineIsDropped() throws {
     try withTemporaryLog { log, url in
-        try log.append(closed)
+        try log.append(try closed)
         try log.append(transcribed)
         let torn = try encoded(.chunkTranscribed(index: 1)).dropLast(6)
         try appendRaw(String(torn), to: url)
 
         let read = try log.checkpoints()
-        #expect(read == [closed, transcribed])
+        #expect(read == [try closed, transcribed])
     }
 }
 
@@ -83,21 +85,21 @@ func tornLastLineIsDropped() throws {
 @Test("an append after a torn line leaves the checkpoints before it readable")
 func appendAfterATornLineKeepsEarlierCheckpoints() throws {
     try withTemporaryLog { log, url in
-        try log.append(closed)
+        try log.append(try closed)
         try log.append(transcribed)
         try appendRaw(String(try encoded(.chunkTranscribed(index: 1)).dropLast(6)), to: url)
 
         try log.append(.chunkTranscribed(index: 2))
 
         let read = try log.checkpoints()
-        #expect(read == [closed, transcribed, .chunkTranscribed(index: 2)])
+        #expect(read == [try closed, transcribed, .chunkTranscribed(index: 2)])
     }
 }
 
 @Test("a log torn during its very first append still takes the next one")
 func appendAfterATornFirstLineStartsTheLogOver() throws {
     try withTemporaryLog { log, url in
-        try appendRaw(String(try encoded(closed).dropLast(6)), to: url)
+        try appendRaw(String(try encoded(try closed).dropLast(6)), to: url)
 
         try log.append(transcribed)
 
@@ -109,7 +111,7 @@ func appendAfterATornFirstLineStartsTheLogOver() throws {
 @Test("a terminated line that does not decode is corruption, reported with its number")
 func corruptLineIsReported() throws {
     try withTemporaryLog { log, url in
-        try log.append(closed)
+        try log.append(try closed)
         try appendRaw("{\"chunkTranscribed\":\n", to: url)
         try log.append(transcribed)
 
@@ -182,7 +184,7 @@ func racingWritersEachLandAWholeLine() throws {
 @Test("a log that cannot be read refuses the append rather than writing blind")
 func unreadableLogRefusesTheAppend() throws {
     try withTemporaryLog { log, url in
-        try log.append(closed)
+        try log.append(try closed)
         try FileManager.default.setAttributes([.posixPermissions: 0o200], ofItemAtPath: url.path)
         // Root would sail past the barrier and make the rest of this vacuous.
         #expect(!FileManager.default.isReadableFile(atPath: url.path))
@@ -192,7 +194,7 @@ func unreadableLogRefusesTheAppend() throws {
         }
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        #expect(try log.checkpoints() == [closed])
+        #expect(try log.checkpoints() == [try closed])
     }
 }
 
@@ -202,7 +204,7 @@ func unreadableLogRefusesTheAppend() throws {
 @Test("a torn tail on an unreadable log is never fused over")
 func tornTailOnAnUnreadableLogIsNeverFusedOver() throws {
     try withTemporaryLog { log, url in
-        try log.append(closed)
+        try log.append(try closed)
         try appendRaw(String(try encoded(transcribed).dropLast(4)), to: url)
         try FileManager.default.setAttributes([.posixPermissions: 0o200], ofItemAtPath: url.path)
         #expect(!FileManager.default.isReadableFile(atPath: url.path))
@@ -210,7 +212,7 @@ func tornTailOnAnUnreadableLogIsNeverFusedOver() throws {
         #expect(throws: JSONLProgressLog.Failure.self) { try log.append(transcribed) }
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        #expect(try log.checkpoints() == [closed])
+        #expect(try log.checkpoints() == [try closed])
     }
 }
 
@@ -219,7 +221,7 @@ func tornTailOnAnUnreadableLogIsNeverFusedOver() throws {
 @Test("a repair truncates at the last newline of the file it opened, not of the path")
 func repairTruncatesTheFileItOpened() throws {
     try withTemporaryLog { log, url in
-        let line = try encoded(closed)
+        let line = try encoded(try closed)
         let descriptor = try openTorn(url, keeping: line)
         defer { close(descriptor) }
 
@@ -240,7 +242,7 @@ func repairTruncatesTheFileItOpened() throws {
 @Test("a repair whose path vanished stays on its descriptor instead of throwing")
 func repairOnAVanishedPathStaysOnItsDescriptor() throws {
     try withTemporaryLog { log, url in
-        let line = try encoded(closed)
+        let line = try encoded(try closed)
         let descriptor = try openTorn(url, keeping: line)
         defer { close(descriptor) }
         try FileManager.default.removeItem(at: url)

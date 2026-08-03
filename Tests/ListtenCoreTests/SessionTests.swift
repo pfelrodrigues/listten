@@ -75,7 +75,7 @@ func invalidTransitionIsRefused() throws {
 func segmentIdentityIsTrackAndIndex() throws {
     var session = try Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
         .applying(.confirm)
-    let segment = Segment(index: 0, track: .microphone, start: 0, duration: 45)
+    let segment = try Segment(index: 0, track: .microphone, start: 0, duration: 45)
     session = try session.appending(segment)
 
     // The replay issue #50 leads with, then the same identity disagreeing about what it measures.
