@@ -50,12 +50,19 @@ public actor FileSessionStore: SessionStoring {
     }
 
     public func load(id: String) async throws -> Session? {
-        let file = root.appending(path: id).appending(path: Self.stateFileName)
-        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        var isDirectory: ObjCBool = false
+        let directory = root.appending(path: id)
+        // An entry that is not a session directory holds no state to lose.
+        guard FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return nil }
 
-        let data = try Data(contentsOf: file)
         do {
+            let data = try Data(contentsOf: directory.appending(path: Self.stateFileName))
             return try decoder.decode(Session.self, from: data)
+        } catch let failure as CocoaError where failure.code == .fileReadNoSuchFile {
+            // Only a proven absence reads as a session that was never saved.
+            return nil
         } catch {
             throw UnreadableSession(id: id, underlying: error)
         }

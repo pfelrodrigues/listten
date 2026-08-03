@@ -59,6 +59,9 @@ func verifySessionStoringContract(
         sourceLocation: sourceLocation
     )
 
+    // Two of them, damaged in the reverse of their sorted order: with only one
+    // the promise that unreadable is ordered by id cannot fail.
+    try await subject.corrupt("foxtrot")
     try await subject.corrupt("bravo")
     await #expect(throws: (any Error).self, sourceLocation: sourceLocation) {
         _ = try await store.load(id: "bravo")
@@ -66,8 +69,8 @@ func verifySessionStoringContract(
     #expect(
         try await store.unfinished()
             == UnfinishedSessions(
-                sessions: [armed("alpha"), armed("foxtrot")],
-                unreadable: ["bravo"]
+                sessions: [armed("alpha")],
+                unreadable: ["bravo", "foxtrot"]
             ),
         "state that cannot be read is named, and takes none of its neighbours with it",
         sourceLocation: sourceLocation

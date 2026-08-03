@@ -22,6 +22,14 @@ private func expectNotWritable(_ url: URL, sourceLocation: SourceLocation = #_so
     )
 }
 
+private func expectNotReadable(_ url: URL, sourceLocation: SourceLocation = #_sourceLocation) {
+    #expect(
+        !FileManager.default.isReadableFile(atPath: url.path),
+        "\(url.lastPathComponent) is readable, so the failure it stands for never happened",
+        sourceLocation: sourceLocation
+    )
+}
+
 @Test("a root that does not exist yet reads as empty and is created on the first save")
 func missingRootIsCreatedOnDemand() async throws {
     let root = temporaryRoot()
@@ -58,6 +66,76 @@ func truncatedStateFileIsAnError() async throws {
     let scan = try await store.unfinished()
     #expect(scan.sessions == [session("2026-01-02")])
     #expect(scan.unreadable == ["2026-01-01"])
+    try FileManager.default.removeItem(at: root)
+}
+
+@Test("a state file that cannot be read is named like one that cannot be parsed")
+func unreadableStateFileIsAnError() async throws {
+    let root = temporaryRoot()
+    let store = FileSessionStore(root: root)
+    try await store.save(session("2026-01-01"))
+    try await store.save(session("2026-01-02"))
+
+    let file = stateFile(in: root, id: "2026-01-01")
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+    expectNotReadable(file)
+
+    let failure = await #expect(throws: FileSessionStore.UnreadableSession.self) {
+        _ = try await store.load(id: "2026-01-01")
+    }
+
+    #expect(failure?.id == "2026-01-01")
+    #expect((failure?.underlying as? CocoaError)?.code == .fileReadNoPermission)
+    #expect(
+        try await store.unfinished()
+            == UnfinishedSessions(sessions: [session("2026-01-02")], unreadable: ["2026-01-01"]),
+        "a file that cannot be read takes none of its neighbours with it"
+    )
+
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    try FileManager.default.removeItem(at: root)
+}
+
+/// The first save is the one that can leave a directory holding no state: it
+/// creates the directory before the temporary file it renames into place.
+@Test("a session directory holding only what a crash left behind reads as nothing saved")
+func sessionDirectoryWithoutStateFileIsNothingSaved() async throws {
+    let root = temporaryRoot()
+    let store = FileSessionStore(root: root)
+    let directory = root.appending(path: "2026-01-01")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let leftover = FileSessionStore.temporaryURL(for: stateFile(in: root, id: "2026-01-01"))
+    try Data(#"{"id":"2026-01-01","started"#.utf8).write(to: leftover)
+
+    #expect(try await store.load(id: "2026-01-01") == nil)
+    #expect(try await store.unfinished() == UnfinishedSessions(sessions: []))
+    try FileManager.default.removeItem(at: root)
+}
+
+@Test("a session directory that cannot be entered is an error rather than nothing saved")
+func unreadableSessionDirectoryIsAnError() async throws {
+    let root = temporaryRoot()
+    let store = FileSessionStore(root: root)
+    try await store.save(session("2026-01-01"))
+    try await store.save(session("2026-01-02"))
+
+    let directory = root.appending(path: "2026-01-01")
+    try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: directory.path)
+    expectNotReadable(directory)
+
+    let failure = await #expect(throws: FileSessionStore.UnreadableSession.self) {
+        _ = try await store.load(id: "2026-01-01")
+    }
+
+    #expect(failure?.id == "2026-01-01")
+    #expect((failure?.underlying as? CocoaError)?.code == .fileReadNoPermission)
+    #expect(
+        try await store.unfinished()
+            == UnfinishedSessions(sessions: [session("2026-01-02")], unreadable: ["2026-01-01"]),
+        "state behind a directory nobody can enter is named, not dropped from both lists"
+    )
+
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
     try FileManager.default.removeItem(at: root)
 }
 
@@ -164,6 +242,8 @@ func entryWithoutStateFileIsIgnored() async throws {
     try await store.save(session("2026-01-01"))
     try Data().write(to: root.appending(path: ".DS_Store"))
 
-    #expect(try await store.unfinished().sessions.map(\.id) == ["2026-01-01"])
+    let scan = try await store.unfinished()
+    #expect(scan.sessions.map(\.id) == ["2026-01-01"])
+    #expect(scan.unreadable.isEmpty, "an entry that is not a session directory is not lost state")
     try FileManager.default.removeItem(at: root)
 }
