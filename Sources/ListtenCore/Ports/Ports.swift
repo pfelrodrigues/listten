@@ -83,3 +83,66 @@ public protocol RecordingPrompting: Sendable {
 public protocol TimeSource: Sendable {
     var now: Date { get }
 }
+
+/// What the note says. No frontmatter and no identifiers: the note has to read
+/// on its own, and fitting it into a knowledge base is somebody else's job.
+public struct MeetingNote: Sendable, Equatable {
+    public let title: String
+    public let summary: String
+    public let actionItems: [String]
+    public let transcript: Transcript
+
+    public init(
+        title: String,
+        summary: String,
+        actionItems: [String],
+        transcript: Transcript
+    ) {
+        self.title = title
+        self.summary = summary
+        self.actionItems = actionItems
+        self.transcript = transcript
+    }
+}
+
+/// Where a note ended up: kept inside the session directory, delivered to the
+/// configured folder.
+public struct NoteLocation: Sendable, Equatable {
+    public let kept: URL
+    public let delivered: URL
+
+    public init(kept: URL, delivered: URL) {
+        self.kept = kept
+        self.delivered = delivered
+    }
+}
+
+/// The copy failed and the note is still at `kept`. Naming where it stayed is
+/// what lets a retry deliver the same note rather than regenerate one.
+public struct NoteNotDelivered: Error {
+    public let kept: URL
+    public let underlying: any Error
+
+    public init(kept: URL, underlying: any Error) {
+        self.kept = kept
+        self.underlying = underlying
+    }
+}
+
+/// Writes the finished note where the user will read it.
+///
+/// The note is written inside the session directory first and copied to the
+/// destination afterwards, so a destination that is missing, unmounted or
+/// read-only costs the copy and never the note. Held to these by
+/// `verifyNoteWritingContract`:
+///
+/// - What is delivered is what was kept, byte for byte.
+/// - A destination that is not there is unavailable, never created. An
+///   unmounted volume looks exactly like a missing folder, so creating it would
+///   write a phantom note onto the boot disk and report success.
+/// - A name already taken at the destination is never overwritten: the note
+///   lands beside it. There is no deduplication either way, since two meetings
+///   may share a title and neither is a copy of the other.
+public protocol NoteWriting: Sendable {
+    func write(_ note: MeetingNote, for sessionID: String) async throws -> NoteLocation
+}
