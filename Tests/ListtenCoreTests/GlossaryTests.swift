@@ -57,3 +57,40 @@ func correctsNextToPunctuation() {
 
     #expect(glossary.correcting("in delphy, yes") == "in Delphi, yes")
 }
+
+@Test("a term one entry produced is not rewritten by another, in either order")
+func doesNotCorrectWhatItJustCorrected() {
+    let entries: [Glossary.Entry] = [
+        .init(term: "pull request", heardAs: ["pool request"]),
+        .init(term: "PR", heardAs: ["pull request"]),
+    ]
+
+    #expect(Glossary(entries: entries).correcting("open a pool request") == "open a pull request")
+    #expect(
+        Glossary(entries: entries.reversed()).correcting("open a pool request")
+            == "open a pull request"
+    )
+}
+
+@Test("the longest variant matching at a position wins, in either order")
+func longestVariantWins() {
+    let entries: [Glossary.Entry] = [
+        .init(term: "PR", heardAs: ["pee arr"]),
+        .init(term: "pull request", heardAs: ["pee arr request"]),
+    ]
+
+    #expect(
+        Glossary(entries: entries).correcting("open a pee arr request") == "open a pull request"
+    )
+    #expect(
+        Glossary(entries: entries.reversed()).correcting("open a pee arr request")
+            == "open a pull request"
+    )
+}
+
+@Test("text the pass walks over character by character survives multi-byte characters")
+func keepsMultiByteCharactersIntact() {
+    let glossary = Glossary(entries: [.init(term: "Delphi", heardAs: ["delphy"])])
+
+    #expect(glossary.correcting("café 👨‍👩‍👧 delphy é") == "café 👨‍👩‍👧 Delphi é")
+}
