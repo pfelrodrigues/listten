@@ -135,7 +135,7 @@ enum Recording {
     /// Wrapped in PerformStep, so an intent lands before the state is saved and
     /// a completion after. A crash between the two leaves a step recovery can
     /// name and redo, rather than a segment nobody can account for.
-    private static func keep(
+    static func keep(
         _ segment: Segment,
         in session: Session,
         of sessionID: String,
@@ -174,8 +174,4 @@ private struct ConsolePrompt: RecordingPrompting {
     func askWhetherToRecord(sessionID: String) async throws {
         print("armed \(sessionID)")
     }
-}
-
-private struct SystemTimeSource: TimeSource {
-    var now: Date { Date() }
 }
