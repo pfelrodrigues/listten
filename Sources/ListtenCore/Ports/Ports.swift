@@ -45,8 +45,13 @@ public protocol AudioCapturing: Sendable {
 }
 
 /// Asks the user whether to record. Nothing reaches disk before the answer.
+///
+/// Throwing means the prompt was not delivered, so no answer is ever coming.
+/// Returning means it was delivered and says nothing about whether the user
+/// answered: an implementation that reported the decline as an error would make
+/// a refused meeting indistinguishable from a notification centre that is off.
 public protocol RecordingPrompting: Sendable {
-    func askWhetherToRecord(sessionID: String) async
+    func askWhetherToRecord(sessionID: String) async throws
 }
 
 /// Injected so tests do not depend on wall time. Not named `Clock`: that would

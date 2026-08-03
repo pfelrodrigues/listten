@@ -19,9 +19,16 @@ actor InMemorySessionStore: SessionStoring {
 }
 
 actor RecordingPromptSpy: RecordingPrompting {
+    private let failure: (any Error)?
     private(set) var asked: [String] = []
 
-    func askWhetherToRecord(sessionID: String) async {
+    init(failure: (any Error)? = nil) {
+        self.failure = failure
+    }
+
+    /// A prompt that was not delivered was never asked, so it is not recorded.
+    func askWhetherToRecord(sessionID: String) async throws {
+        if let failure { throw failure }
         asked.append(sessionID)
     }
 }
