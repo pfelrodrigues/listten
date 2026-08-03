@@ -143,7 +143,8 @@ enum Entry {
             sampleRate: rate,
             peak: loudest,
             dropped: await microphone.droppedBuffers,
-            restarts: await microphone.restarts
+            restarts: await microphone.restarts,
+            asked: seconds
         )
     }
 
@@ -152,11 +153,13 @@ enum Entry {
         sampleRate: Double,
         peak: Float,
         dropped: Int,
-        restarts: Int
+        restarts: Int,
+        asked: Double
     ) {
         guard let last = segments.last else {
             // The counters are the whole diagnosis when nothing arrived: a
             // watchdog that kept restarting says the device is there and mute.
+            _ = asked
             print("No audio arrived, after \(restarts) restart(s) and \(dropped) drop(s).")
             print("Check that an input device is selected and that access is granted.")
             exit(1)
@@ -175,6 +178,15 @@ enum Entry {
         print("Gaps:         \(gaps.isEmpty ? "none" : gaps.joined(separator: ", "))")
         print("Dropped:      \(dropped) buffer(s)")
         print("Restarts:     \(restarts)")
+
+        // A capture that ended early is not a capture that finished. Saying so
+        // is the difference between a short meeting and a lost one.
+        if last.end < asked - 0.5 {
+            print(
+                "Ended early: the device stopped delivering after "
+                    + String(format: "%.2f", last.end) + "s of the \(asked)s asked for."
+            )
+        }
 
         if dropped > 0 {
             print("Audio was lost: the drain could not keep up with the device.")

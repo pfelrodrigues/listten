@@ -145,10 +145,12 @@ public actor MicrophoneCapture: AudioSource {
         do {
             try engine.start()
         } catch {
-            // The device went away for good. Tearing down ends the stream, which
-            // tells the caller to finalize what it has rather than wait for
-            // audio that is not coming.
-            tearDown()
+            // A device halfway through being swapped refuses to start, and that
+            // is a moment rather than a verdict. Ending the session here reads
+            // to the caller as a clean finish and silently truncates the
+            // meeting, so the watchdog is left to try again; it is the one that
+            // eventually gives up, loudly, after a bounded number of attempts.
+            return
         }
     }
 
