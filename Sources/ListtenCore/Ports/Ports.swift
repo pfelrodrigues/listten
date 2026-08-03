@@ -2,7 +2,11 @@ import Foundation
 
 /// Where sessions are kept between runs, so an interrupted one can be resumed.
 public protocol SessionStoring: Sendable {
+    /// Replaces whatever was held for that id: the last state saved wins.
     func save(_ session: Session) async throws
+
+    /// Nil means the session was never saved. State that exists but cannot be
+    /// read is an error, since recovery reads nil as nothing left to do.
     func load(id: String) async throws -> Session?
 
     /// Ordered by id, which sorts chronologically. An implementation free to
