@@ -48,6 +48,10 @@ final class CaptureRing: @unchecked Sendable {
     /// quiet meeting.
     var dropped: Int { droppedCount.load(ordering: .relaxed) }
 
+    /// Buffers the device has handed over since this ring was made. A count
+    /// that stops growing is how a watchdog tells a stall from a pause.
+    var delivered: Int { writeIndex.load(ordering: .relaxed) }
+
     /// Called on the audio thread. Allocates nothing, waits for nothing.
     func write(
         samples: UnsafePointer<Float>,

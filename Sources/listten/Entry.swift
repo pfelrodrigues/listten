@@ -72,7 +72,8 @@ enum Entry {
             segments: segments,
             sampleRate: rate,
             peak: loudest,
-            dropped: await microphone.droppedBuffers
+            dropped: await microphone.droppedBuffers,
+            restarts: await microphone.restarts
         )
     }
 
@@ -80,10 +81,14 @@ enum Entry {
         segments: [Segment],
         sampleRate: Double,
         peak: Float,
-        dropped: Int
+        dropped: Int,
+        restarts: Int
     ) {
         guard let last = segments.last else {
-            print("No audio arrived. Check that an input device is selected and permitted.")
+            // The counters are the whole diagnosis when nothing arrived: a
+            // watchdog that kept restarting says the device is there and mute.
+            print("No audio arrived, after \(restarts) restart(s) and \(dropped) drop(s).")
+            print("Check that an input device is selected and that access is granted.")
             exit(1)
         }
 
@@ -99,6 +104,7 @@ enum Entry {
             .map { String(format: "%.2fs–%.2fs", $0.end, $1.start) }
         print("Gaps:         \(gaps.isEmpty ? "none" : gaps.joined(separator: ", "))")
         print("Dropped:      \(dropped) buffer(s)")
+        print("Restarts:     \(restarts)")
 
         if dropped > 0 {
             print("Audio was lost: the drain could not keep up with the device.")
