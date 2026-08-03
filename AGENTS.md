@@ -95,6 +95,12 @@ LISTTEN_AUDIO_HARDWARE=1 mise run test
 Run that before merging anything that touches capture. A contract that only ever
 meets the fake proves nothing about the device.
 
+`mise run kill9` is the other half: it kills a real recording at several points
+and checks that every playable file is accounted for afterwards. In-process
+tests can stage any on-disk state they like, so only this says the process
+really leaves that state behind. It found nothing the day it was written and
+would have caught #77 the week before, which is the point.
+
 ## Style
 
 - English everywhere: code, comments, commit messages, CLI output.
