@@ -42,7 +42,8 @@ func theBufferThatCrossesTheRotationClosesTheSegment() throws {
         closed = try subject.placing(buffer(at: 1000 + Double(tick) / 10)).closed
     }
 
-    #expect(closed == Segment(index: 0, track: .microphone, start: 0, duration: 0.5))
+    let expected = try Segment(index: 0, track: .microphone, start: 0, duration: 0.5)
+    #expect(closed == expected)
 }
 
 @Test("the next buffer after a rotation opens the next file")
@@ -71,7 +72,8 @@ func aGapMovesTheNextSegmentRatherThanStretchingThisOne() throws {
     let reopened = try subject.placing(buffer(at: 1002.1))
     let afterGap = try subject.placing(buffer(at: 1002.2)).closed
 
-    #expect(beforeGap == Segment(index: 0, track: .microphone, start: 0, duration: 0.2))
+    let expectedBeforeGap = try Segment(index: 0, track: .microphone, start: 0, duration: 0.2)
+    #expect(beforeGap == expectedBeforeGap)
     #expect(reopened.index == 1)
     // Start moved by the whole gap; duration is still only the audio that came.
     // Compared with a tolerance because the start is a difference of clock
@@ -87,14 +89,16 @@ func closingHandsOverTheOpenFile() throws {
     _ = try subject.placing(buffer(at: 1000))
     _ = try subject.placing(buffer(at: 1000.1))
 
-    #expect(subject.closing() == Segment(index: 0, track: .microphone, start: 0, duration: 0.2))
+    let handedOver = try subject.closing()
+    let expected = try Segment(index: 0, track: .microphone, start: 0, duration: 0.2)
+    #expect(handedOver == expected)
 }
 
 @Test("closing an accumulator that took nothing hands over nothing")
-func closingWithNothingOpenHandsOverNothing() {
+func closingWithNothingOpenHandsOverNothing() throws {
     var subject = accumulator()
 
-    #expect(subject.closing() == nil)
+    #expect(try subject.closing() == nil)
 }
 
 @Test("closing twice does not hand the same file over again")
@@ -102,8 +106,8 @@ func closingTwiceHandsOverNothingTheSecondTime() throws {
     var subject = accumulator()
     _ = try subject.placing(buffer(at: 1000))
 
-    #expect(subject.closing() != nil)
-    #expect(subject.closing() == nil)
+    #expect(try subject.closing() != nil)
+    #expect(try subject.closing() == nil)
 }
 
 @Test("a buffer whose rate cannot produce a length is refused")

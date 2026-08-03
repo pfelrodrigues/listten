@@ -50,18 +50,18 @@ public struct SegmentAccumulator: Sendable {
         guard accumulated >= rotateEvery else {
             return Placement(index: belongsTo, closed: nil)
         }
-        return Placement(index: belongsTo, closed: rotate())
+        return Placement(index: belongsTo, closed: try rotate())
     }
 
     /// Hands over the file still open, so stopping does not cost its audio.
     /// Nothing open means nothing to hand over, twice in a row included.
-    public mutating func closing() -> Segment? {
-        rotate()
+    public mutating func closing() throws -> Segment? {
+        try rotate()
     }
 
-    private mutating func rotate() -> Segment? {
+    private mutating func rotate() throws -> Segment? {
         guard let start else { return nil }
-        let segment = Segment(
+        let segment = try Segment(
             index: index,
             track: track,
             start: start,

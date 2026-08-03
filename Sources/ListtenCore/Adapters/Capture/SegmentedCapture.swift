@@ -85,7 +85,7 @@ public actor SegmentedCapture: AudioCapturing {
         // stopping never costs the audio since the last rotation.
         var partials: [Segment] = []
         for track in accumulators.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
-            if let segment = accumulators[track]?.closing() {
+            if let segment = try accumulators[track]?.closing() {
                 partials.append(segment)
             }
             open[track] = nil
@@ -157,7 +157,7 @@ public actor SegmentedCapture: AudioCapturing {
     }
 
     private func closeOpenSegment(of track: Track) throws {
-        guard var accumulator = accumulators[track], let closed = accumulator.closing() else {
+        guard var accumulator = accumulators[track], let closed = try accumulator.closing() else {
             return
         }
         accumulators[track] = accumulator

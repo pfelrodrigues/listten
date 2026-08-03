@@ -39,7 +39,7 @@ public struct CaptureTimeline: Sendable, Equatable {
         guard hostTime >= anchor else {
             throw AudioBeforeTheAnchor(hostTime: hostTime, anchor: anchor)
         }
-        return Segment(
+        return try Segment(
             index: index,
             track: track,
             start: hostTime - anchor,

@@ -19,39 +19,57 @@ public struct Glossary: Sendable, Equatable, Codable {
         self.entries = entries
     }
 
+    /// One left-to-right pass over the original text: a stretch already
+    /// rewritten is never looked at again, so no entry can rewrite what another
+    /// produced. Where several variants match at one position the longest wins,
+    /// which keeps the result independent of the order entries are declared in,
+    /// except where two variants cover the same stretch: there the first
+    /// declared entry wins.
     public func correcting(_ text: String) -> String {
-        entries.reduce(text) { corrected, entry in
-            entry.heardAs.reduce(corrected) { partial, variant in
-                Self.replacingWholeWords(of: variant, with: entry.term, in: partial)
-            }
-        }
-    }
-
-    /// Matching anywhere in the string would turn "branches" into "PRes", so
-    /// the variant has to sit on word boundaries. Terms may contain spaces,
-    /// which rules out splitting the text on whitespace.
-    private static func replacingWholeWords(
-        of variant: String,
-        with term: String,
-        in text: String
-    ) -> String {
         var result = ""
         var index = text.startIndex
 
-        while let found = text.range(
-            of: variant,
-            options: .caseInsensitive,
-            range: index..<text.endIndex
-        ) {
-            result += text[index..<found.lowerBound]
-            result += isWholeWord(found, in: text) ? term : String(text[found])
-            index = found.upperBound
+        while index < text.endIndex {
+            if let match = longestMatch(in: text, at: index) {
+                result += match.term
+                index = match.end
+            } else {
+                result.append(text[index])
+                index = text.index(after: index)
+            }
         }
 
-        result += text[index...]
         return result
     }
 
+    /// The longest variant starting exactly at `index` and standing as a whole
+    /// word, first declaration winning ties.
+    private func longestMatch(
+        in text: String,
+        at index: String.Index
+    ) -> (term: String, end: String.Index)? {
+        var best: (term: String, end: String.Index)?
+
+        for entry in entries {
+            for variant in entry.heardAs {
+                guard
+                    let found = text.range(
+                        of: variant,
+                        options: [.caseInsensitive, .anchored],
+                        range: index..<text.endIndex
+                    ), Self.isWholeWord(found, in: text)
+                else { continue }
+
+                if let current = best, found.upperBound <= current.end { continue }
+                best = (entry.term, found.upperBound)
+            }
+        }
+
+        return best
+    }
+
+    /// Matching anywhere would turn "branches" into "PRes", and terms may hold
+    /// spaces, which rules out splitting the text on whitespace.
     private static func isWholeWord(_ range: Range<String.Index>, in text: String) -> Bool {
         let before = range.lowerBound == text.startIndex
         let after = range.upperBound == text.endIndex
