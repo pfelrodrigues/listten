@@ -75,23 +75,15 @@ func invalidTransitionIsRefused() throws {
 func segmentIdentityIsTrackAndIndex() throws {
     var session = try Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
         .applying(.confirm)
-    session = try session.appending(Segment(index: 0, track: .microphone, start: 0, duration: 45))
-
-    #expect(throws: Session.RuleViolation.duplicateSegment(track: .microphone, index: 0)) {
-        try session.appending(Segment(index: 0, track: .microphone, start: 90, duration: 10))
-    }
-    #expect(session.segments.count == 1)
-}
-
-@Test("replaying the same segment twice is refused rather than duplicated")
-func identicalSegmentIsRefusedTwice() throws {
-    var session = try Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
-        .applying(.confirm)
     let segment = Segment(index: 0, track: .microphone, start: 0, duration: 45)
     session = try session.appending(segment)
 
+    // The replay issue #50 leads with, then the same identity disagreeing about what it measures.
     #expect(throws: Session.RuleViolation.duplicateSegment(track: .microphone, index: 0)) {
         try session.appending(segment)
+    }
+    #expect(throws: Session.RuleViolation.duplicateSegment(track: .microphone, index: 0)) {
+        try session.appending(Segment(index: 0, track: .microphone, start: 90, duration: 10))
     }
 }
 

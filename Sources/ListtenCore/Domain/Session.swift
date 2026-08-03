@@ -25,12 +25,12 @@ public struct Session: Sendable, Equatable, Codable {
         segments.map(\.end).max() ?? 0
     }
 
-    /// Refuses a `(track, index)` already recorded, so a replayed log cannot duplicate audio.
+    /// A segment is identified by `(track, index)`, not by what it measures: a
+    /// repeat is a replayed log or two logs disagreeing, never audio to record.
     public func appending(_ segment: Segment) throws -> Session {
         guard state.acceptsAudio else {
             throw RuleViolation.audioWhileNotRecording(state)
         }
-        // A segment is identified by its track and index, not by what it measures.
         guard !segments.contains(where: { $0.track == segment.track && $0.index == segment.index })
         else {
             throw RuleViolation.duplicateSegment(track: segment.track, index: segment.index)
