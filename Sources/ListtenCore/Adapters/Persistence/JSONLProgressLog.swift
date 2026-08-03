@@ -40,12 +40,17 @@ public struct JSONLProgressLog: Sendable {
         var line = try JSONEncoder().encode(checkpoint)
         line.append(Self.newline)
 
-        // Reading needs O_RDWR: what the tail looks like decides where to write.
-        let descriptor = open(url.path, O_RDWR | O_APPEND | O_CREAT, 0o600)
+        // Dropping the tail means reading it, and a log nobody may read has no
+        // reader to protect, so a write-only one is appended to blind.
+        var descriptor = open(url.path, O_RDWR | O_APPEND | O_CREAT, 0o600)
+        let readable = descriptor >= 0
+        if !readable, errno == EACCES {
+            descriptor = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        }
         guard descriptor >= 0 else { throw Failure.unwritable(path: url.path, code: errno) }
         defer { close(descriptor) }
 
-        try dropUnfinishedTail(descriptor)
+        if readable { try dropUnfinishedTail(descriptor) }
 
         let written = line.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
         // Retrying half a line would append the remainder behind whatever else
@@ -55,7 +60,7 @@ public struct JSONLProgressLog: Sendable {
 
     /// Writing behind a torn line would fuse the two into one terminated line
     /// the reader cannot decode, burying every checkpoint before it.
-    private func dropUnfinishedTail(_ descriptor: Int32) throws {
+    func dropUnfinishedTail(_ descriptor: Int32) throws {
         var status = stat()
         guard fstat(descriptor, &status) == 0 else {
             throw Failure.unwritable(path: url.path, code: errno)
@@ -69,10 +74,13 @@ public struct JSONLProgressLog: Sendable {
         guard last != Self.newline else { return }
 
         // Only a crash gets here, so reading the whole log costs nothing usual.
-        let stored = try Data(contentsOf: url)
-        let terminated =
-            stored.lastIndex(of: Self.newline)
-            .map { stored.distance(from: stored.startIndex, to: $0) + 1 } ?? 0
+        // It reads the descriptor, since the path may name another file by now.
+        var stored = [UInt8](repeating: 0, count: Int(status.st_size))
+        let read = stored.withUnsafeMutableBytes { pread(descriptor, $0.baseAddress, $0.count, 0) }
+        guard read == stored.count else {
+            throw Failure.unwritable(path: url.path, code: errno)
+        }
+        let terminated = stored.lastIndex(of: Self.newline).map { $0 + 1 } ?? 0
         guard ftruncate(descriptor, off_t(terminated)) == 0 else {
             throw Failure.unwritable(path: url.path, code: errno)
         }

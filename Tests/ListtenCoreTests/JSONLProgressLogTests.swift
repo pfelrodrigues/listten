@@ -176,6 +176,74 @@ func racingWritersEachLandAWholeLine() throws {
     }
 }
 
+/// A log the owner made write-only cannot be read back by anyone, so the tail
+/// check has nothing left to protect and must not cost the append.
+@Test("a write-only log still takes an append")
+func writeOnlyLogStillTakesAnAppend() throws {
+    try withTemporaryLog { log, url in
+        try log.append(closed)
+        try FileManager.default.setAttributes([.posixPermissions: 0o200], ofItemAtPath: url.path)
+
+        try log.append(transcribed)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        #expect(try log.checkpoints() == [closed, transcribed])
+    }
+}
+
+/// The offset came from the path while the truncation went to the descriptor,
+/// so a path replaced mid-repair sized the open file against a foreign one.
+@Test("a repair truncates at the last newline of the file it opened, not of the path")
+func repairTruncatesTheFileItOpened() throws {
+    try withTemporaryLog { log, url in
+        let line = try encoded(closed)
+        let descriptor = try openTorn(url, keeping: line)
+        defer { close(descriptor) }
+
+        // Longer, so its last newline sits past the end of the opened file.
+        let replacement = url.deletingLastPathComponent().appending(path: "replacement.jsonl")
+        try Data(String(repeating: "x", count: line.count * 2).utf8 + [newline])
+            .write(to: replacement)
+        #expect(rename(replacement.path, url.path) == 0)
+
+        try log.dropUnfinishedTail(descriptor)
+
+        #expect(try contents(of: descriptor) == Data("\(line)\n".utf8))
+    }
+}
+
+/// Reading the log back by path let a Cocoa error out of a call whose only
+/// declared failure is the log's own, which a caller catching it never sees.
+@Test("a repair whose path vanished stays on its descriptor instead of throwing")
+func repairOnAVanishedPathStaysOnItsDescriptor() throws {
+    try withTemporaryLog { log, url in
+        let line = try encoded(closed)
+        let descriptor = try openTorn(url, keeping: line)
+        defer { close(descriptor) }
+        try FileManager.default.removeItem(at: url)
+
+        #expect(throws: Never.self) { try log.dropUnfinishedTail(descriptor) }
+        #expect(try contents(of: descriptor) == Data("\(line)\n".utf8))
+    }
+}
+
+private let newline = UInt8(ascii: "\n")
+
+/// Stages a torn log and hands back a descriptor on it, so the test can change
+/// what the path names while the repair holds the original file.
+private func openTorn(_ url: URL, keeping line: String) throws -> Int32 {
+    try appendRaw("\(line)\nTORN", to: url)
+    let descriptor = open(url.path, O_RDWR | O_APPEND)
+    #expect(descriptor >= 0)
+    return descriptor
+}
+
+private func contents(of descriptor: Int32) throws -> Data {
+    let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+    try handle.seek(toOffset: 0)
+    return try handle.readToEnd() ?? Data()
+}
+
 private func indices(of checkpoints: [Checkpoint]) -> [Int] {
     checkpoints.compactMap {
         guard case .chunkTranscribed(let index) = $0 else { return nil }
