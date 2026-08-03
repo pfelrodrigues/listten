@@ -202,18 +202,8 @@ enum Entry {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "L"
-
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Listten \(Listten.version)", action: nil, keyEquivalent: "")
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Quit",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        statusItem.menu = menu
+        let bar = MenuBar(root: Self.defaultRoot)
+        bar.install()
 
         app.run()
         exit(0)
