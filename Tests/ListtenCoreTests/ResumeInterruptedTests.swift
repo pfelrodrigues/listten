@@ -23,7 +23,7 @@ func interruptedRecordingBecomesRecorded() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed.map(\.session.state) == [.recorded])
+    #expect(resumed.resumed.map(\.session.state) == [.recorded])
 }
 
 @Test("a crash does not rescue a recording that stopping would have discarded")
@@ -37,7 +37,7 @@ func recoveryAppliesTheSameMinimumAsStopping() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed.map(\.session.state) == [.discarded])
+    #expect(resumed.resumed.map(\.session.state) == [.discarded])
 }
 
 @Test("an armed session found at startup is discarded, since its prompt died with the process")
@@ -52,7 +52,7 @@ func armedSessionIsDiscarded() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resolved.map(\.session.state) == [.discarded])
+    #expect(resolved.resumed.map(\.session.state) == [.discarded])
     #expect(try await store.load(id: "s1")?.state == .discarded)
     #expect(try await store.unfinished().sessions.isEmpty)
 }
@@ -70,7 +70,7 @@ func terminalSessionsAreNotResumed() async throws {
             progress: InMemoryProgressLog(),
             minimumDuration: 60
         )()
-        .isEmpty
+        .resumed.isEmpty
     )
 }
 
@@ -90,15 +90,15 @@ func unreadableSessionDoesNotBlockRecovery() async throws {
         .appending(path: FileSessionStore.stateFileName)
     try Data(#"{"id":"2026-01-01-aaa","started"#.utf8).write(to: corrupted)
 
-    // Still a failure, and it says which session it was: the loss is reported
-    // rather than masked, only after the readable ones are safe.
-    await #expect(throws: ResumeInterrupted.UnreadableSessions(ids: ["2026-01-01-aaa"])) {
-        _ = try await ResumeInterrupted(
-            sessions: store,
-            progress: SessionProgressLogs(root: root),
-            minimumDuration: 30
-        )()
-    }
+    // Still reported, and it says which session and which file: the loss is
+    // named rather than masked, and it does not cost the readable ones.
+    let recovery = try await ResumeInterrupted(
+        sessions: store,
+        progress: SessionProgressLogs(root: root),
+        minimumDuration: 30
+    )()
+    #expect(recovery.unreadableState == ["2026-01-01-aaa"])
+    #expect(recovery.unreadableProgress.isEmpty)
 
     #expect(try await store.load(id: "2026-01-02-bbb")?.state == .recorded)
     #expect(try await store.load(id: "2026-01-03-ccc")?.state == .recorded)
@@ -116,7 +116,7 @@ func nonRecordingUnfinishedSessionIsUntouched() async throws {
             progress: InMemoryProgressLog(),
             minimumDuration: 60
         )()
-        .isEmpty
+        .resumed.isEmpty
     )
 }
 
@@ -141,7 +141,7 @@ func interruptedStepIsNamed() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed == [.init(session: transcribing, redo: [chunk])])
+    #expect(resumed.resumed == [.init(session: transcribing, redo: [chunk])])
 }
 
 /// A step that reached its completion is done, whatever the state around it
@@ -162,7 +162,7 @@ func finishedStepIsNotRedone() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed.isEmpty)
+    #expect(resumed.resumed.isEmpty)
 }
 
 @Test("a recording that was interrupted mid-segment is recorded and says which segment to redo")
@@ -178,8 +178,8 @@ func interruptedRecordingNamesItsSegment() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed.map(\.session.state) == [.recorded])
-    #expect(resumed.map(\.redo) == [[segment]])
+    #expect(resumed.resumed.map(\.session.state) == [.recorded])
+    #expect(resumed.resumed.map(\.redo) == [[segment]])
 }
 
 /// Nothing survives a discarded session, so a step it died inside is not work
@@ -197,8 +197,8 @@ func discardedSessionRedoesNothing() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed.map(\.session.state) == [.discarded])
-    #expect(resumed.map(\.redo) == [[]])
+    #expect(resumed.resumed.map(\.session.state) == [.discarded])
+    #expect(resumed.resumed.map(\.redo) == [[]])
 }
 
 /// A completion is only ever written by the step that declared the intent, so a
@@ -215,20 +215,17 @@ func brokenProgressIsLoudAndTakesPrecedence() async throws {
     await store.corrupt(id: "unreadable")
     try await progress.append(.completion(chunk), for: "broken")
 
-    await #expect(
-        throws: ResumeInterrupted.BrokenProgress(
-            broken: ["broken": .init(completionWithoutIntent: chunk)]
-        )
-    ) {
-        _ = try await ResumeInterrupted(
-            sessions: store,
-            progress: progress,
-            minimumDuration: 60
-        )()
-    }
+    let recovery = try await ResumeInterrupted(
+        sessions: store,
+        progress: progress,
+        minimumDuration: 60
+    )()
+    #expect(recovery.brokenProgress == ["broken": .init(completionWithoutIntent: chunk)])
+    #expect(recovery.unreadableState == ["unreadable"])
 
     #expect(try await store.load(id: "healthy")?.state == .recorded)
-    #expect(try await store.load(id: "broken")?.state == .recording)
+    // A log that must not be believed still does not cost the meeting.
+    #expect(try await store.load(id: "broken")?.state == .recorded)
 }
 
 @Test("progress that cannot be read costs that meeting and no other")
@@ -239,16 +236,18 @@ func unreadableProgressIsReportedLikeUnreadableState() async throws {
     try await store.save(try recording("healthy", duration: 90))
     await progress.corrupt(id: "lost")
 
-    await #expect(throws: ResumeInterrupted.UnreadableSessions(ids: ["lost"])) {
-        _ = try await ResumeInterrupted(
-            sessions: store,
-            progress: progress,
-            minimumDuration: 60
-        )()
-    }
+    let recovery = try await ResumeInterrupted(
+        sessions: store,
+        progress: progress,
+        minimumDuration: 60
+    )()
+    // Named under progress, not under state: the state file is intact.
+    #expect(recovery.unreadableProgress == ["lost"])
+    #expect(recovery.unreadableState.isEmpty)
 
     #expect(try await store.load(id: "healthy")?.state == .recorded)
-    #expect(try await store.load(id: "lost")?.state == .recording)
+    // Resolved anyway: the log was needed for the redo list, not for this.
+    #expect(try await store.load(id: "lost")?.state == .recorded)
 }
 
 /// Against the real log, since a torn tail is dropped by design and never
@@ -278,18 +277,17 @@ func unreadableProgressOnDiskCostsOneMeeting() async throws {
                 .appending(path: FileSessionStore.stateFileName)
         )
 
-    await #expect(
-        throws: ResumeInterrupted.UnreadableSessions(ids: ["2026-01-01-aaa", "2026-01-03-ccc"])
-    ) {
-        _ = try await ResumeInterrupted(
-            sessions: store,
-            progress: SessionProgressLogs(root: root),
-            minimumDuration: 30
-        )()
-    }
+    let recovery = try await ResumeInterrupted(
+        sessions: store,
+        progress: SessionProgressLogs(root: root),
+        minimumDuration: 30
+    )()
+    // Each named under the file that is actually damaged.
+    #expect(recovery.unreadableProgress == ["2026-01-01-aaa"])
+    #expect(recovery.unreadableState == ["2026-01-03-ccc"])
 
     #expect(try await store.load(id: "2026-01-02-bbb")?.state == .recorded)
-    #expect(try await store.load(id: "2026-01-01-aaa")?.state == .recording)
+    #expect(try await store.load(id: "2026-01-01-aaa")?.state == .recorded)
     try FileManager.default.removeItem(at: root)
 }
 
@@ -323,6 +321,6 @@ func stepTornBetweenItsEndsIsRedone() async throws {
         minimumDuration: 60
     )()
 
-    #expect(resumed == [.init(session: transcribing, redo: [chunk])])
+    #expect(resumed.resumed == [.init(session: transcribing, redo: [chunk])])
     try FileManager.default.removeItem(at: root)
 }

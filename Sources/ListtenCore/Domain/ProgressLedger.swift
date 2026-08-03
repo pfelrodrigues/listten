@@ -18,6 +18,15 @@ public struct ProgressLedger: Sendable, Equatable {
     /// Steps that reached their completion, which must not run again.
     public let finished: [PipelineStep]
 
+    /// What a log nobody could read leaves known: nothing was in flight as far
+    /// as anyone can tell, and nothing may be skipped as finished.
+    public static let nothingKnown = ProgressLedger()
+
+    private init() {
+        interrupted = []
+        finished = []
+    }
+
     /// Folded in the order the log holds, which is the order the steps ran: a
     /// completion answers the intent before it, and an intent written again puts
     /// a step that had finished back in flight, since a redo is a fresh attempt

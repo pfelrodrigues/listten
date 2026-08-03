@@ -95,11 +95,20 @@ enum Recording {
                 progress: SessionProgressLogs(root: root),
                 minimumDuration: 1
             )()
-            guard !resolved.isEmpty else {
-                print("nothing left open under \(root.path)")
-                return
+            for id in resolved.unreadableState {
+                print("!! \(id): session.json could not be read")
             }
-            for resumption in resolved {
+            for id in resolved.unreadableProgress {
+                print("!! \(id): progress.jsonl could not be read")
+            }
+            for (id, failure) in resolved.brokenProgress.sorted(by: { $0.key < $1.key }) {
+                print("!! \(id): progress log pairs up wrong, \(failure)")
+            }
+
+            if resolved.resumed.isEmpty, resolved.isClean {
+                print("nothing left open under \(root.path)")
+            }
+            for resumption in resolved.resumed {
                 let session = resumption.session
                 print(
                     "\(session.id) -> \(session.state.rawValue), "
@@ -110,6 +119,10 @@ enum Recording {
                     print("  redo \(redo)")
                 }
             }
+
+            // Loud without wedging: the work is done and the losses are named,
+            // and a script still learns that something was lost.
+            if !resolved.isClean { exit(1) }
         } catch {
             fail("recovery reported: \(error)")
         }

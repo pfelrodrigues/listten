@@ -14,18 +14,25 @@ import Foundation
 /// no completion is one the process died inside, so it is named for redo; a step
 /// with both ends is finished and must not run again.
 public struct ResumeInterrupted: Sendable {
-    /// Raised after the readable sessions are already resolved, so state that
-    /// cannot be read costs the meeting it describes and no other.
-    public struct UnreadableSessions: Error, Equatable {
-        public let ids: [String]
-    }
+    /// What a recovery run found, reported rather than thrown. Throwing put the
+    /// whole run on the floor for one damaged file, including sessions it was
+    /// never going to touch, and nothing cleared the file, so every later run
+    /// failed the same way. A loss is named beside the sessions that resolved.
+    public struct Recovery: Sendable, Equatable {
+        public let resumed: [Resumption]
+        /// Sessions whose `session.json` could not be read.
+        public let unreadableState: [String]
+        /// Sessions whose `progress.jsonl` could not be read. Kept apart from
+        /// the above because they are different files, and sending someone to
+        /// the wrong one is the expensive part of a bad diagnosis.
+        public let unreadableProgress: [String]
+        /// Logs that pair up wrong: a completion nobody intended describes work
+        /// that cannot have happened, so the session must not be resumed from it.
+        public let brokenProgress: [String: ProgressLedger.BrokenLog]
 
-    /// A log holding a completion nobody intended describes work that cannot
-    /// have happened, so it is reported ahead of `UnreadableSessions`: state
-    /// nobody can read is a session lost, while a log that pairs up wrong is a
-    /// session about to be resumed from a lie.
-    public struct BrokenProgress: Error, Equatable {
-        public let broken: [String: ProgressLedger.BrokenLog]
+        public var isClean: Bool {
+            unreadableState.isEmpty && unreadableProgress.isEmpty && brokenProgress.isEmpty
+        }
     }
 
     /// A session recovery resolved, and the steps it has to redo before the
@@ -49,24 +56,25 @@ public struct ResumeInterrupted: Sendable {
         self.minimumDuration = minimumDuration
     }
 
-    public func callAsFunction() async throws -> [Resumption] {
+    public func callAsFunction() async throws -> Recovery {
         let unfinished = try await sessions.unfinished()
         var resolved: [Resumption] = []
-        var unreadable = unfinished.unreadable
+        var unreadableProgress: [String] = []
         var broken: [String: ProgressLedger.BrokenLog] = [:]
 
         for session in unfinished.sessions {
-            let ledger: ProgressLedger
+            // Which step to redo needs the log; moving a crashed recording to
+            // recorded never did. So a log that cannot be read, or one that
+            // pairs up wrong and must not be believed, costs the redo list and
+            // not the meeting: the session is still resolved, with nothing to
+            // redo, and the loss is named.
+            var ledger = ProgressLedger.nothingKnown
             do {
                 ledger = try ProgressLedger(await progress.checkpoints(for: session.id))
             } catch let failure as ProgressLedger.BrokenLog {
                 broken[session.id] = failure
-                continue
             } catch {
-                // A log nobody can read is this session's progress lost, like
-                // its state file: the meetings around it are still resumable.
-                unreadable.append(session.id)
-                continue
+                unreadableProgress.append(session.id)
             }
 
             let outcome: Session?
@@ -87,10 +95,11 @@ public struct ResumeInterrupted: Sendable {
             resolved.append(Resumption(session: resumed, redo: redo))
         }
 
-        // Reported last, so what could be resolved is already saved: a session
-        // nobody can read is still a session lost.
-        guard broken.isEmpty else { throw BrokenProgress(broken: broken) }
-        guard unreadable.isEmpty else { throw UnreadableSessions(ids: unreadable.sorted()) }
-        return resolved
+        return Recovery(
+            resumed: resolved,
+            unreadableState: unfinished.unreadable.sorted(),
+            unreadableProgress: unreadableProgress.sorted(),
+            brokenProgress: broken
+        )
     }
 }
