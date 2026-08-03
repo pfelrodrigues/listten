@@ -113,6 +113,7 @@ enum Entry {
             await microphone.stop()
         }
 
+        let began = Date()
         var timeline: CaptureTimeline?
         var segments: [Segment] = []
         var loudest: Float = 0
@@ -144,7 +145,9 @@ enum Entry {
             peak: loudest,
             dropped: await microphone.droppedBuffers,
             restarts: await microphone.restarts,
-            asked: seconds
+            // Measured, not inferred: silence at the end is a quiet moment, and
+            // a stream that stopped before its time is a lost recording.
+            cutShortBy: seconds - Date().timeIntervalSince(began)
         )
     }
 
@@ -154,12 +157,12 @@ enum Entry {
         peak: Float,
         dropped: Int,
         restarts: Int,
-        asked: Double
+        cutShortBy: Double
     ) {
         guard let last = segments.last else {
             // The counters are the whole diagnosis when nothing arrived: a
             // watchdog that kept restarting says the device is there and mute.
-            _ = asked
+            _ = cutShortBy
             print("No audio arrived, after \(restarts) restart(s) and \(dropped) drop(s).")
             print("Check that an input device is selected and that access is granted.")
             exit(1)
@@ -179,12 +182,10 @@ enum Entry {
         print("Dropped:      \(dropped) buffer(s)")
         print("Restarts:     \(restarts)")
 
-        // A capture that ended early is not a capture that finished. Saying so
-        // is the difference between a short meeting and a lost one.
-        if last.end < asked - 0.5 {
+        if cutShortBy > 0.5 {
             print(
-                "Ended early: the device stopped delivering after "
-                    + String(format: "%.2f", last.end) + "s of the \(asked)s asked for."
+                "Ended early: the capture stopped "
+                    + String(format: "%.1f", cutShortBy) + "s before it was asked to."
             )
         }
 
