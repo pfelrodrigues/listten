@@ -29,6 +29,19 @@ func recoveryAppliesTheSameMinimumAsStopping() async throws {
     #expect(resumed.map(\.state) == [.discarded])
 }
 
+@Test("an armed session found at startup is discarded, since its prompt died with the process")
+func armedSessionIsDiscarded() async throws {
+    let store = InMemorySessionStore()
+    let session = Session(id: "s1", startedAt: .init(timeIntervalSince1970: 0))
+    try await store.save(session)
+
+    let resolved = try await ResumeInterrupted(sessions: store, minimumDuration: 60)()
+
+    #expect(resolved.map(\.state) == [.discarded])
+    #expect(try await store.load(id: "s1")?.state == .discarded)
+    #expect(try await store.unfinished().isEmpty)
+}
+
 @Test("finished sessions are left alone")
 func terminalSessionsAreNotResumed() async throws {
     let store = InMemorySessionStore()

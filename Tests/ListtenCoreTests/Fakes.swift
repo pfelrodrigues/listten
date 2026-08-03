@@ -18,10 +18,25 @@ actor InMemorySessionStore: SessionStoring {
     }
 }
 
+/// Stands for whatever the notification centre refuses with.
+struct PromptUndeliverable: Error, Equatable {}
+
 actor RecordingPromptSpy: RecordingPrompting {
+    private let failure: (any Error)?
+
+    /// Every call, delivered or not, so a caller that asks twice is visible.
+    private(set) var attempts: [String] = []
+
+    /// Only the calls that reached the user.
     private(set) var asked: [String] = []
 
-    func askWhetherToRecord(sessionID: String) async {
+    init(failure: (any Error)? = nil) {
+        self.failure = failure
+    }
+
+    func askWhetherToRecord(sessionID: String) async throws {
+        attempts.append(sessionID)
+        if let failure { throw failure }
         asked.append(sessionID)
     }
 }

@@ -1,9 +1,13 @@
 import Foundation
 
-/// Runs at startup. Recovery is the normal path, not the exceptional one: a
-/// session left recording by a crash keeps its closed segments, so it moves on
-/// as recorded rather than being thrown away. It ends on the same terms a user
+/// Runs at startup over the unfinished sessions, resolving the two states no
+/// later step can. Recovery is the normal path, not the exceptional one: a session
+/// left recording by a crash keeps its closed segments, so it moves on as
+/// recorded rather than being thrown away. It ends on the same terms a user
 /// pressing Stop would get, so how the process died cannot change the verdict.
+/// An armed one is discarded instead: its prompt did not survive the process, so
+/// nobody can answer it any more, and nothing was recorded. Every other
+/// unfinished state is left for the pipeline step that owns it.
 public struct ResumeInterrupted: Sendable {
     private let sessions: any SessionStoring
     private let minimumDuration: TimeInterval
@@ -14,13 +18,17 @@ public struct ResumeInterrupted: Sendable {
     }
 
     public func callAsFunction() async throws -> [Session] {
-        var resumed: [Session] = []
+        var resolved: [Session] = []
         for session in try await sessions.unfinished() {
-            guard session.state == .recording else { continue }
-            let recovered = try session.stopping(minimumDuration: minimumDuration)
-            try await sessions.save(recovered)
-            resumed.append(recovered)
+            let outcome: Session
+            switch session.state {
+            case .recording: outcome = try session.stopping(minimumDuration: minimumDuration)
+            case .armed: outcome = try session.applying(.discard)
+            default: continue
+            }
+            try await sessions.save(outcome)
+            resolved.append(outcome)
         }
-        return resumed
+        return resolved
     }
 }

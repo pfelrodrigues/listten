@@ -16,6 +16,20 @@ func armingStoresAndPrompts() async throws {
     #expect(await prompts.asked == [session.id])
 }
 
+@Test("a prompt that never reached the user fails arming, instead of reading as unanswered")
+func undeliverablePromptFailsArming() async throws {
+    let store = InMemorySessionStore()
+    let prompts = RecordingPromptSpy(failure: PromptUndeliverable())
+    let arm = ArmSession(sessions: store, prompt: prompts, clock: FixedTimeSource())
+
+    await #expect(throws: PromptUndeliverable.self) { try await arm() }
+
+    let armed = try await store.unfinished()
+    #expect(armed.map(\.state) == [.armed])
+    // One attempt for that session: an undelivered prompt is not worth repeating.
+    #expect(await prompts.attempts == armed.map(\.id))
+}
+
 @Test("two sessions armed at the same instant get different ids")
 func idsDoNotCollide() async throws {
     let store = InMemorySessionStore()
