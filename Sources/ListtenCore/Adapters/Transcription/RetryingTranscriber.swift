@@ -111,7 +111,8 @@ public struct RetryingTranscriber: Transcribing {
             return retryAfter.map { Duration.seconds($0) } ?? backoff
         case .timedOut, .serverError:
             return backoff
-        case .noAudio, .unsupportedLanguage, .multitrackUnsupported, .malformedResponse, nil:
+        case .noAudio, .unsupportedLanguage, .multitrackUnsupported, .unreadableAudio,
+            .malformedResponse, nil:
             return nil
         }
     }

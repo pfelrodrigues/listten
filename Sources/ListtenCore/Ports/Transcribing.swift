@@ -65,6 +65,10 @@ public enum TranscriptionFailure: Error, Equatable {
     case noAudio
     case unsupportedLanguage(String)
     case multitrackUnsupported(tracks: Int)
+    /// Audio that cannot be opened or decoded. A refusal rather than transport:
+    /// the file will not read any better on a second attempt. Added when the
+    /// first backend that reads a file arrived, since a fake never had to.
+    case unreadableAudio(String)
     case timedOut
     /// Seconds the backend asked to be left alone for, where it said.
     case rateLimited(retryAfter: TimeInterval?)

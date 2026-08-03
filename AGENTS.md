@@ -96,6 +96,17 @@ LISTTEN_AUDIO_HARDWARE=1 mise run test
 Run that before merging anything that touches capture. A contract that only ever
 meets the fake proves nothing about the device.
 
+Transcription has its own, since it needs a speech model rather than a
+microphone:
+
+```sh
+LISTTEN_SPEECH_MODEL=1 mise run test
+```
+
+Its fixture is synthesised on the spot rather than checked in, so what goes in
+is known and what comes back can be compared against it. Recognition returning
+something is not recognition working.
+
 `mise run kill9` is the other half: it kills a real recording at several points
 and checks that every playable file is accounted for afterwards. In-process
 tests can stage any on-disk state they like, so only this says the process
