@@ -16,3 +16,25 @@ func unfinishedSessionsComeBackInAStableOrder() async throws {
 
     #expect(listed == ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"])
 }
+
+@Test("the prompt spy counts a delivered ask once, as attempted and as asked")
+func deliveredPromptIsAttemptedAndAsked() async throws {
+    let prompts = RecordingPromptSpy()
+
+    try await prompts.askWhetherToRecord(sessionID: "s1")
+
+    #expect(await prompts.attempts == ["s1"])
+    #expect(await prompts.asked == ["s1"])
+}
+
+@Test("the prompt spy counts an undelivered ask as attempted, never as asked")
+func undeliveredPromptIsAttemptedButNotAsked() async throws {
+    let prompts = RecordingPromptSpy(failure: PromptUndeliverable())
+
+    await #expect(throws: PromptUndeliverable.self) {
+        try await prompts.askWhetherToRecord(sessionID: "s1")
+    }
+
+    #expect(await prompts.attempts == ["s1"])
+    #expect(await prompts.asked.isEmpty)
+}
