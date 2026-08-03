@@ -46,9 +46,10 @@ Coverage is gated per layer: `Domain` and `Application` at 100% of lines,
 adapters reported but not gated, since they are covered by integration against
 real devices and files.
 
-`listten capture [seconds]` records from the microphone and reports what
-arrived. It needs microphone permission, so it is a manual check rather than a
-CI one.
+`listten capture [seconds] [directory]` records from the microphone. Without a
+directory it reports what arrived; with one it writes numbered CAF segments and
+prints each as it closes. Either way it needs microphone permission, so it is a
+manual check rather than a CI one.
 
 ```sh
 mise run hooks     # enable the git hooks

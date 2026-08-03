@@ -17,7 +17,11 @@ enum Entry {
         case "--help", "-h":
             printUsage()
         case "capture":
-            await captureFromMicrophone(seconds: args.dropFirst().first.flatMap(Double.init) ?? 5)
+            let rest = Array(args.dropFirst())
+            await captureFromMicrophone(
+                seconds: rest.first.flatMap(Double.init) ?? 5,
+                writingTo: rest.dropFirst().first.map { URL(filePath: $0) }
+            )
         default:
             FileHandle.standardError.write(Data("unknown command: \(args[0])\n".utf8))
             exit(64)
@@ -27,7 +31,60 @@ enum Entry {
     /// Runs the real microphone against the real clock and reports what turned
     /// up. Unplug a headset while it runs: the gap it prints is the device
     /// change, and the session continuing past it is the point.
-    private static func captureFromMicrophone(seconds: Double) async {
+    private static func captureFromMicrophone(seconds: Double, writingTo directory: URL?) async {
+        guard let directory else {
+            await reportBuffers(seconds: seconds)
+            return
+        }
+        await writeSegments(seconds: seconds, to: directory)
+    }
+
+    /// Records to numbered files and prints them as they close, so a `kill -9`
+    /// part-way through can be checked against what it claimed was already safe.
+    private static func writeSegments(seconds: Double, to directory: URL) async {
+        let capture = SegmentedCapture(
+            sources: [.microphone: MicrophoneCapture()],
+            directory: directory,
+            rotateEvery: 5
+        )
+        let stream: AsyncStream<Segment>
+        do {
+            stream = try await capture.start()
+        } catch {
+            FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
+            exit(1)
+        }
+
+        print("Recording \(seconds)s into \(directory.path), 5s segments.")
+        // The stopper owns the result: stopping is what ends the stream, so
+        // asking again afterwards would answer with nothing and hide both the
+        // last segment and any write that failed.
+        let stopper = Task {
+            try await Task.sleep(for: .seconds(seconds))
+            return try await capture.stop()
+        }
+
+        for await segment in stream {
+            print(
+                "closed \(capture.url(for: segment.track, index: segment.index).lastPathComponent)"
+                    + " \(String(format: "%.2f", segment.duration))s"
+            )
+        }
+
+        do {
+            for partial in try await stopper.value {
+                print(
+                    "final  \(capture.url(for: partial.track, index: partial.index).lastPathComponent)"
+                        + " \(String(format: "%.2f", partial.duration))s"
+                )
+            }
+        } catch {
+            FileHandle.standardError.write(Data("stopping reported: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+
+    private static func reportBuffers(seconds: Double) async {
         let microphone = MicrophoneCapture()
         let stream: AsyncStream<CapturedAudio>
         do {
@@ -143,8 +200,9 @@ enum Entry {
 
             Usage:
               listten                    run the menu bar agent
-              listten capture [seconds]  record from the microphone and report
-                                         what arrived, for checking a device
+              listten capture [seconds] [directory]
+                                         record from the microphone; with a
+                                         directory, write numbered segments
 
             Options:
               -v, --version   print the version
