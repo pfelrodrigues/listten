@@ -13,7 +13,7 @@ final class MenuBar: NSObject {
     private let statusItem = NSStatusBar.system.statusItem(
         withLength: NSStatusItem.variableLength
     )
-    private let recorder: RecordingSession
+    private let recorder: SessionRecorder
     private let sessionsRoot: URL
     private var ticker: Timer?
 
@@ -24,12 +24,13 @@ final class MenuBar: NSObject {
 
     init(root: URL) {
         sessionsRoot = root
-        recorder = RecordingSession(root: root)
+        recorder = Composition.recorder(root: root)
         super.init()
     }
 
     func install() {
         Self.installed = self
+        shown = .idle
         rebuild(for: .idle)
 
         // A second is enough to watch a recording grow and cheap enough to leave
@@ -39,11 +40,18 @@ final class MenuBar: NSObject {
         }
     }
 
+    private var shown: SessionRecorder.State?
+
+    /// Rebuilt only when something changed. Replacing the menu every second is
+    /// visible, and replacing it under a menu somebody has open is worse.
     private func refresh() async {
-        rebuild(for: await recorder.current())
+        let state = await recorder.current()
+        guard state != shown else { return }
+        shown = state
+        rebuild(for: state)
     }
 
-    private func rebuild(for state: RecordingSession.State) {
+    private func rebuild(for state: SessionRecorder.State) {
         // A symbol rather than text: a menu bar with a notch hides what does not
         // fit, and "● 12:34" is wide enough to be the thing that gets hidden.
         // The detail lives one click away, where there is room for it.
@@ -85,7 +93,7 @@ final class MenuBar: NSObject {
     /// Filled means recording, which is the one distinction that has to survive
     /// a glance. The elapsed time is what says audio is still arriving rather
     /// than merely switched on, so it is the first line of the menu.
-    private static func symbol(for state: RecordingSession.State) -> String {
+    private static func symbol(for state: SessionRecorder.State) -> String {
         switch state {
         case .idle: return "waveform"
         case .recording: return "waveform.circle.fill"
@@ -95,7 +103,7 @@ final class MenuBar: NSObject {
         }
     }
 
-    private static func explanation(for state: RecordingSession.State) -> String {
+    private static func explanation(for state: SessionRecorder.State) -> String {
         switch state {
         case .idle:
             return "Not recording"
@@ -104,7 +112,7 @@ final class MenuBar: NSObject {
         case .finishing:
             return "Finishing the last segment"
         case .finished(_, let outcome, let seconds):
-            return "Last session \(outcome), \(clock(seconds))"
+            return "Last session \(outcome.rawValue), \(clock(seconds))"
         case .failed(let reason):
             return reason
         }
@@ -142,10 +150,8 @@ final class MenuBar: NSObject {
     }
 
     @objc private func openSession() {
-        Task { @MainActor in
-            guard let directory = await recorder.directory() else { return }
-            NSWorkspace.shared.open(directory)
-        }
+        guard case .finished(let id, _, _) = shown else { return }
+        NSWorkspace.shared.open(sessionsRoot.appending(path: id))
     }
 
     @objc private func openSessionsFolder() {

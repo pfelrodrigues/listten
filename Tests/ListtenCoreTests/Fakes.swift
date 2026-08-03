@@ -322,3 +322,24 @@ actor RefusingAudioSource: AudioSource {
 
     func stop() async {}
 }
+
+/// A store that takes a session in and refuses the ones that follow, which is
+/// what a disk filling up mid-recording looks like from here.
+actor StoreThatRefusesToSave: SessionStoring {
+    struct Refused: Error, Equatable {}
+
+    private var stored: [String: Session] = [:]
+    private var accepted = 0
+
+    func save(_ session: Session) async throws {
+        guard accepted < 2 else { throw Refused() }
+        accepted += 1
+        stored[session.id] = session
+    }
+
+    func load(id: String) async throws -> Session? { stored[id] }
+
+    func unfinished() async throws -> UnfinishedSessions {
+        UnfinishedSessions(sessions: stored.values.filter { !$0.state.isTerminal })
+    }
+}
