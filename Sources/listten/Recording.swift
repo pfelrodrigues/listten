@@ -35,7 +35,7 @@ enum Recording {
             fail("could not start recording: \(error)")
         }
 
-        let log = JSONLProgressLog(url: directory.appending(path: "progress.jsonl"))
+        let step = PerformStep(progress: SessionProgressLogs(root: root))
         let capture = SegmentedCapture(
             sources: [.microphone: MicrophoneCapture()],
             directory: directory.appending(path: "audio"),
@@ -56,12 +56,18 @@ enum Recording {
         }
 
         for await segment in stream {
-            recording = await keep(segment, in: recording, store: store, log: log)
+            recording = await keep(segment, in: recording, of: session.id, store: store, step: step)
         }
 
         do {
             for partial in try await stopper.value {
-                recording = await keep(partial, in: recording, store: store, log: log)
+                recording = await keep(
+                    partial,
+                    in: recording,
+                    of: session.id,
+                    store: store,
+                    step: step
+                )
             }
         } catch {
             fail("capture reported: \(error)")
@@ -84,36 +90,50 @@ enum Recording {
     static func resume(root: URL) async {
         let store = FileSessionStore(root: root)
         do {
-            let resolved = try await ResumeInterrupted(sessions: store, minimumDuration: 1)()
+            let resolved = try await ResumeInterrupted(
+                sessions: store,
+                progress: SessionProgressLogs(root: root),
+                minimumDuration: 1
+            )()
             guard !resolved.isEmpty else {
                 print("nothing left open under \(root.path)")
                 return
             }
-            for session in resolved {
+            for resumption in resolved {
+                let session = resumption.session
                 print(
                     "\(session.id) -> \(session.state.rawValue), "
                         + "\(session.segments.count) segment(s), "
                         + String(format: "%.2f", session.duration) + "s"
                 )
+                for redo in resumption.redo {
+                    print("  redo \(redo)")
+                }
             }
         } catch {
             fail("recovery reported: \(error)")
         }
     }
 
-    /// Audio is the source of truth, so the checkpoint is written first: a crash
-    /// between the two leaves a segment the log knows about and the state file
-    /// does not, which recovery can reconcile. The other order loses it.
+    /// Wrapped in PerformStep, so an intent lands before the state is saved and
+    /// a completion after. A crash between the two leaves a step recovery can
+    /// name and redo, rather than a segment nobody can account for.
     private static func keep(
         _ segment: Segment,
         in session: Session,
+        of sessionID: String,
         store: FileSessionStore,
-        log: JSONLProgressLog
+        step: PerformStep
     ) async -> Session {
         do {
-            try log.append(.segmentClosed(segment: segment))
-            let grown = try session.appending(segment)
-            try await store.save(grown)
+            let grown = try await step(
+                .closingSegment(track: segment.track, index: segment.index),
+                of: sessionID
+            ) {
+                let grown = try session.appending(segment)
+                try await store.save(grown)
+                return grown
+            }
             print(
                 "  \(segment.track.rawValue)-\(segment.index) "
                     + String(format: "%.2f", segment.duration) + "s"
