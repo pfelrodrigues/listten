@@ -22,7 +22,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>Listten</string>
-  <key>CFBundleIdentifier</key><string>br.com.pyo.listten</string>
+  <key>CFBundleIdentifier</key><string>br.com.pfelrodrigues.listten</string>
   <key>CFBundleName</key><string>Listten</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
@@ -31,6 +31,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>NSMicrophoneUsageDescription</key><string>Listten records your voice during meetings you choose to record.</string>
   <key>NSAudioCaptureUsageDescription</key><string>Listten records other participants during meetings you choose to record.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Listten transcribes your meetings on this device.</string>
 </dict></plist>
 PLIST
 
