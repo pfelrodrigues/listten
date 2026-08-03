@@ -159,18 +159,25 @@ public actor MicrophoneCapture: AudioSource {
     /// Everything inside the tap block runs on the audio thread, where
     /// allocating, locking or waiting would cost recorded audio. It copies into
     /// a slot that already exists and returns.
+    /// A device caught mid-swap reports a format that nothing can be tapped
+    /// with, and AVFoundation answers that with an Objective-C exception, which
+    /// Swift cannot catch and which takes the recording down with the process.
+    /// Skipping leaves the watchdog to try again a moment later.
     private func installTap(into ring: CaptureRing) {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        let sampleRate = format.sampleRate
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, time in
+        // Passing nil means the node's own format, so there is no second
+        // opinion to disagree with; the rate then comes from each buffer, which
+        // is also what makes a device returning at another rate survivable.
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, time in
             guard let channel = buffer.floatChannelData?[0] else { return }
             _ = ring.write(
                 samples: channel,
                 frames: Int(buffer.frameLength),
                 hostTime: AVAudioTime.seconds(forHostTime: time.hostTime),
-                sampleRate: sampleRate
+                sampleRate: buffer.format.sampleRate
             )
         }
     }
