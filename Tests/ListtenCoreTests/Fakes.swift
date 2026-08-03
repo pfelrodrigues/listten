@@ -67,16 +67,20 @@ actor RecordingPromptSpy: RecordingPrompting {
 final class ManualTimeSource: TimeSource {
     private let instant: Mutex<Date>
 
-    /// Nonzero by default: a source is contractually forbidden a buffer stamped
-    /// at zero, and an epoch clock would stamp the first one there.
+    /// Never the epoch, whatever a caller asks for: a source is contractually
+    /// forbidden a buffer stamped at zero, which is where it would stamp its first.
     init(now: Date = Date(timeIntervalSince1970: 1000)) {
+        precondition(
+            now.timeIntervalSince1970 > 0,
+            "a clock at the epoch leaves the first buffer unstamped"
+        )
         instant = Mutex(now)
     }
 
     var now: Date { instant.withLock { $0 } }
 
-    /// Named for setting rather than advancing, since the source that owns one
-    /// derives the instant: moving this clock alone produces no audio.
+    /// Named for setting rather than advancing, since the sources sharing one
+    /// derive the instant: moving this clock alone produces no audio.
     func set(to next: Date) {
         instant.withLock { $0 = next }
     }
@@ -152,7 +156,11 @@ actor FakeAudioSource: AudioSource {
         self.continuation = continuation
         if case .buffers(let count) = drive {
             advance(by: Double(count) * bufferDuration)
+            // Done before start returns, so it is no longer running and holds no
+            // continuation: time passing now would yield into a finished stream.
             continuation.finish()
+            self.continuation = nil
+            state = .stopped
         }
         return stream
     }
@@ -162,11 +170,15 @@ actor FakeAudioSource: AudioSource {
     /// advances hears nothing at all.
     func advance(by interval: TimeInterval) {
         precondition(interval >= 0, "a device does not un-produce audio")
-        // Time passing before start, or after stop, would leave the buffers it
-        // was worth yielded into nothing and gone without a trace.
+        // Time passing before start, after stop, or once a source finished its
+        // own stream leaves the buffers it was worth yielded into nothing.
         precondition(state == .running, "a source that is not running produces nothing")
         elapsed += interval
-        clock.set(to: Date(timeIntervalSince1970: origin + elapsed))
+        // Absolute, so two sources over the same window write the same instant.
+        // Compared as Dates, whose own precision absorbs how each one got there.
+        let next = Date(timeIntervalSince1970: origin + elapsed)
+        precondition(next >= clock.now, "a source may not push a shared clock backwards")
+        clock.set(to: next)
 
         // Slack of a nanosecond, since three tenths of a second is not three
         // buffers of a tenth once both are Doubles.
