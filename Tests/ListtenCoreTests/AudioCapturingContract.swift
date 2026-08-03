@@ -10,6 +10,25 @@ func verifyAudioCapturingContract(
     _ make: @Sendable () -> any AudioCapturing,
     sourceLocation: SourceLocation = #_sourceLocation
 ) async throws {
+    let unstarted = make()
+    #expect(
+        try await unstarted.stop().isEmpty,
+        "stopping a capture that never started reported audio",
+        sourceLocation: sourceLocation
+    )
+
+    let restarted = make()
+    _ = try await restarted.start()
+    await #expect(throws: CaptureAlreadyStarted.self, sourceLocation: sourceLocation) {
+        _ = try await restarted.start()
+    }
+    _ = try await restarted.stop()
+    #expect(
+        try await restarted.stop().isEmpty,
+        "stopping twice reported the same audio again",
+        sourceLocation: sourceLocation
+    )
+
     let capture = make()
 
     var produced: [Segment] = []

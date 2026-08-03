@@ -40,8 +40,8 @@ public protocol AudioSource: Sendable {
     /// timeline. Throws if this source was already started.
     func start() async throws -> AsyncStream<CapturedAudio>
 
-    /// Idempotent, like `AudioCapturing.stop()`: stopping a source that never
-    /// started, or stopping one twice, is not an error.
+    /// Idempotent: stopping a source that never started, or stopping one twice,
+    /// is not an error. Held to this by `verifyAudioSourceContract`.
     func stop() async
 }
 
