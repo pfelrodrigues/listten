@@ -3,18 +3,35 @@ import Foundation
 @testable import ListtenCore
 
 actor InMemorySessionStore: SessionStoring {
+    /// Without this the fake has no unreadable state to have, so the rule the
+    /// port promises about it would be met by production alone.
+    struct Unreadable: Error {
+        let id: String
+    }
+
     private var stored: [String: Session] = [:]
+    private var corrupted: Set<String> = []
+
+    func corrupt(id: String) {
+        corrupted.insert(id)
+    }
 
     func save(_ session: Session) async throws {
         stored[session.id] = session
     }
 
     func load(id: String) async throws -> Session? {
-        stored[id]
+        guard !corrupted.contains(id) else { throw Unreadable(id: id) }
+        return stored[id]
     }
 
-    func unfinished() async throws -> [Session] {
-        stored.values.filter { !$0.state.isTerminal }.sorted { $0.id < $1.id }
+    func unfinished() async throws -> UnfinishedSessions {
+        UnfinishedSessions(
+            sessions: stored.values
+                .filter { !corrupted.contains($0.id) && !$0.state.isTerminal }
+                .sorted { $0.id < $1.id },
+            unreadable: corrupted.sorted()
+        )
     }
 }
 

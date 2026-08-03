@@ -9,8 +9,10 @@ import Foundation
 /// full disk cannot leave state that no longer parses.
 ///
 /// State that cannot be read is an error rather than a session that was never
-/// saved, since recovery treats a missing session as nothing to do. Temporary
-/// files a crash left behind are ignored: only `session.json` is state.
+/// saved, since recovery treats a missing session as nothing to do. A scan
+/// names it instead of throwing, so the sessions around it stay reachable.
+/// Temporary files a crash left behind are ignored: only `session.json` is
+/// state.
 public actor FileSessionStore: SessionStoring {
     public struct UnreadableSession: Error {
         public let id: String
@@ -59,18 +61,30 @@ public actor FileSessionStore: SessionStoring {
         }
     }
 
-    public func unfinished() async throws -> [Session] {
-        guard FileManager.default.fileExists(atPath: root.path) else { return [] }
+    public func unfinished() async throws -> UnfinishedSessions {
+        guard FileManager.default.fileExists(atPath: root.path) else {
+            return UnfinishedSessions(sessions: [])
+        }
 
         var unfinished: [Session] = []
+        var unreadable: [String] = []
         for entry in try FileManager.default.contentsOfDirectory(atPath: root.path) {
-            guard let session = try await load(id: entry), !session.state.isTerminal else {
-                continue
+            do {
+                guard let session = try await load(id: entry), !session.state.isTerminal else {
+                    continue
+                }
+                unfinished.append(session)
+            } catch let failure as UnreadableSession {
+                // One file that cannot be parsed is one lost session, not a
+                // store that cannot be listed.
+                unreadable.append(failure.id)
             }
-            unfinished.append(session)
         }
         // A directory listing has no order of its own, and the port promises one.
-        return unfinished.sorted { $0.id < $1.id }
+        return UnfinishedSessions(
+            sessions: unfinished.sorted { $0.id < $1.id },
+            unreadable: unreadable.sorted()
+        )
     }
 
     /// Next to the destination, so the rename stays inside one filesystem.

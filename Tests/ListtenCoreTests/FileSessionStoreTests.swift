@@ -28,7 +28,7 @@ func missingRootIsCreatedOnDemand() async throws {
     let store = FileSessionStore(root: root)
 
     #expect(try await store.load(id: "2026-01-01") == nil)
-    #expect(try await store.unfinished().isEmpty)
+    #expect(try await store.unfinished() == UnfinishedSessions(sessions: []))
 
     try await store.save(session("2026-01-01"))
 
@@ -41,14 +41,23 @@ func truncatedStateFileIsAnError() async throws {
     let root = temporaryRoot()
     let store = FileSessionStore(root: root)
     try await store.save(session("2026-01-01"))
+    try await store.save(session("2026-01-02"))
     try Data(#"{"id":"2026-01-01","started"#.utf8).write(to: stateFile(in: root, id: "2026-01-01"))
 
-    await #expect(throws: FileSessionStore.UnreadableSession.self) {
+    let failure = await #expect(throws: FileSessionStore.UnreadableSession.self) {
         _ = try await store.load(id: "2026-01-01")
     }
-    await #expect(throws: FileSessionStore.UnreadableSession.self) {
-        _ = try await store.unfinished()
-    }
+
+    // Named, not merely thrown: an error that cannot say which session it lost
+    // leaves the caller nothing to report.
+    #expect(failure?.id == "2026-01-01")
+    #expect(failure?.underlying is DecodingError)
+
+    // A second session in the root, so the listing can tell "this one is
+    // unreadable" apart from "nothing here can be read".
+    let scan = try await store.unfinished()
+    #expect(scan.sessions == [session("2026-01-02")])
+    #expect(scan.unreadable == ["2026-01-01"])
     try FileManager.default.removeItem(at: root)
 }
 
@@ -129,7 +138,7 @@ func crashBeforeTheRenameKeepsThePreviousState() async throws {
     #expect(FileManager.default.fileExists(atPath: leftover.path), "the crash left nothing behind")
 
     #expect(try await store.load(id: saved.id) == saved)
-    #expect(try await store.unfinished() == [saved])
+    #expect(try await store.unfinished() == UnfinishedSessions(sessions: [saved]))
     try FileManager.default.removeItem(at: root)
 }
 
@@ -155,6 +164,6 @@ func entryWithoutStateFileIsIgnored() async throws {
     try await store.save(session("2026-01-01"))
     try Data().write(to: root.appending(path: ".DS_Store"))
 
-    #expect(try await store.unfinished().map(\.id) == ["2026-01-01"])
+    #expect(try await store.unfinished().sessions.map(\.id) == ["2026-01-01"])
     try FileManager.default.removeItem(at: root)
 }

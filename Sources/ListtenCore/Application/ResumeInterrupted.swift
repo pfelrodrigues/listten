@@ -5,6 +5,12 @@ import Foundation
 /// as recorded rather than being thrown away. It ends on the same terms a user
 /// pressing Stop would get, so how the process died cannot change the verdict.
 public struct ResumeInterrupted: Sendable {
+    /// Raised after the readable sessions are already resolved, so state that
+    /// cannot be read costs the meeting it describes and no other.
+    public struct UnreadableSessions: Error, Equatable {
+        public let ids: [String]
+    }
+
     private let sessions: any SessionStoring
     private let minimumDuration: TimeInterval
 
@@ -14,12 +20,17 @@ public struct ResumeInterrupted: Sendable {
     }
 
     public func callAsFunction() async throws -> [Session] {
+        let unfinished = try await sessions.unfinished()
         var resumed: [Session] = []
-        for session in try await sessions.unfinished() {
+        for session in unfinished.sessions {
             guard session.state == .recording else { continue }
             let recovered = try session.stopping(minimumDuration: minimumDuration)
             try await sessions.save(recovered)
             resumed.append(recovered)
+        }
+        // Reported last: a session nobody can read is still a session lost.
+        guard unfinished.unreadable.isEmpty else {
+            throw UnreadableSessions(ids: unfinished.unreadable)
         }
         return resumed
     }
