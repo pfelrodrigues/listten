@@ -26,7 +26,8 @@ public actor MicrophoneCapture: AudioSource {
     private var ring: CaptureRing?
     private var drain: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
-    private var restartCount = 0
+    private var consecutiveRestarts = 0
+    private var totalRestarts = 0
 
     public init() {}
 
@@ -38,7 +39,7 @@ public actor MicrophoneCapture: AudioSource {
 
     /// How many times the watchdog had to bring the device back. Non-zero means
     /// the recording has gaps that were recovered rather than lost.
-    public var restarts: Int { restartCount }
+    public var restarts: Int { totalRestarts }
 
     public func start() throws -> AsyncStream<CapturedAudio> {
         guard continuation == nil else { throw CaptureAlreadyStarted() }
@@ -115,6 +116,10 @@ public actor MicrophoneCapture: AudioSource {
             if delivered > seen {
                 seen = delivered
                 detector.received(at: Self.now())
+                // Audio came back, so the budget below is about consecutive
+                // failures to recover. A lifetime count would kill a long
+                // meeting that survived a handful of separate device swaps.
+                consecutiveRestarts = 0
             }
 
             guard detector.verdict(at: Self.now()) == .stalled else { continue }
@@ -122,7 +127,7 @@ public actor MicrophoneCapture: AudioSource {
             // Restarting forever would hide a device that is never coming back.
             // Ending the stream tells the caller to finalize what it has, which
             // is the same answer a device that vanishes for good already gets.
-            guard restartCount < Self.maxRestarts else {
+            guard consecutiveRestarts < Self.maxRestarts else {
                 tearDown()
                 return
             }
@@ -135,7 +140,10 @@ public actor MicrophoneCapture: AudioSource {
     /// shifting everything that follows.
     private func restartCapture(countingIt counted: Bool) {
         guard let ring, continuation != nil else { return }
-        if counted { restartCount += 1 }
+        if counted {
+            consecutiveRestarts += 1
+            totalRestarts += 1
+        }
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
