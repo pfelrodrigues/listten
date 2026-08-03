@@ -312,3 +312,13 @@ struct FailingRecordedAudio: RecordedAudio {
         throw Unlistable()
     }
 }
+
+actor RefusingAudioSource: AudioSource {
+    struct Refused: Error, Equatable {}
+
+    func start() async throws -> AsyncStream<CapturedAudio> {
+        throw Refused()
+    }
+
+    func stop() async {}
+}
