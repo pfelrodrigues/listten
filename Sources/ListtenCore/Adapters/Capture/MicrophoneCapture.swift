@@ -21,6 +21,9 @@ public actor MicrophoneCapture: AudioSource {
     private static let maxRestarts = 5
 
     private let engine = AVAudioEngine()
+    /// Allocated once, written only by the audio thread, and read by nobody
+    /// else: the tap folds into it and hands the result straight to the ring.
+    private let mono = MonoScratch(frames: framesPerSlot)
     private var continuation: AsyncStream<CapturedAudio>.Continuation?
     private var configurationObserver: (any NSObjectProtocol)?
     private var ring: CaptureRing?
@@ -47,7 +50,14 @@ public actor MicrophoneCapture: AudioSource {
         let ring = CaptureRing(slots: Self.slots, framesPerSlot: Self.framesPerSlot)
         self.ring = ring
 
-        let (stream, continuation) = AsyncStream<CapturedAudio>.makeStream()
+        // Bounded on purpose. An unbounded stream lets a slow consumer grow
+        // memory without limit while holding raw PCM, and the budget for a whole
+        // capture is 50 MB. Roughly two seconds of slack is more than the drain
+        // needs and far less than a leak.
+        let (stream, continuation) = AsyncStream<CapturedAudio>
+            .makeStream(
+                bufferingPolicy: .bufferingNewest(Self.slots)
+            )
         self.continuation = continuation
 
         installTap(into: ring)
@@ -181,11 +191,23 @@ public actor MicrophoneCapture: AudioSource {
         // Passing nil means the node's own format, so there is no second
         // opinion to disagree with; the rate then comes from each buffer, which
         // is also what makes a device returning at another rate survivable.
+        let mono = self.mono.samples
         input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, time in
-            guard let channel = buffer.floatChannelData?[0] else { return }
+            guard let channels = buffer.floatChannelData else { return }
+            let frames = Int(buffer.frameLength)
+            guard frames <= Self.framesPerSlot else { return }
+
+            // Folded into a buffer that already exists, since allocating here
+            // would cost recorded audio.
+            ChannelMixdown.mix(
+                UnsafePointer(channels),
+                channels: Int(buffer.format.channelCount),
+                frames: frames,
+                into: mono
+            )
             _ = ring.write(
-                samples: channel,
-                frames: Int(buffer.frameLength),
+                samples: mono,
+                frames: frames,
                 hostTime: AVAudioTime.seconds(forHostTime: time.hostTime),
                 sampleRate: buffer.format.sampleRate
             )
