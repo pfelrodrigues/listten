@@ -36,6 +36,32 @@ actor InMemorySessionStore: SessionStoring {
     }
 }
 
+/// Progress kept in memory, standing for the logs on disk. Held to the same
+/// contract as them by `verifyProgressLoggingContract`.
+actor InMemoryProgressLog: ProgressLogging {
+    /// Without this the fake has no log that cannot be read, so what recovery
+    /// does with one would be answered for by the file-backed log alone.
+    struct Unreadable: Error {
+        let id: String
+    }
+
+    private var logged: [String: [Checkpoint]] = [:]
+    private var corrupted: Set<String> = []
+
+    func corrupt(id: String) {
+        corrupted.insert(id)
+    }
+
+    func append(_ checkpoint: Checkpoint, for sessionID: String) async throws {
+        logged[sessionID, default: []].append(checkpoint)
+    }
+
+    func checkpoints(for sessionID: String) async throws -> [Checkpoint] {
+        guard !corrupted.contains(sessionID) else { throw Unreadable(id: sessionID) }
+        return logged[sessionID] ?? []
+    }
+}
+
 /// Stands for whatever the notification centre refuses with.
 struct PromptUndeliverable: Error, Equatable {}
 
