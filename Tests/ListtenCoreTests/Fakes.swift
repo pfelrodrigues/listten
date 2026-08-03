@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 @testable import ListtenCore
 
@@ -58,44 +59,133 @@ actor RecordingPromptSpy: RecordingPrompting {
     }
 }
 
-/// A device that is not there: delivers a fixed number of buffers and stops.
+/// A clock a test moves by hand, rather than one that runs with the wall.
+///
+/// It conforms to `TimeSource` so that whatever is measuring the capture reads
+/// the same instant the buffers were stamped with, and a test can assert what
+/// something held at that instant without the suite sleeping for it.
+final class ManualTimeSource: TimeSource {
+    private let instant: Mutex<Date>
+
+    /// Nonzero by default: a source is contractually forbidden a buffer stamped
+    /// at zero, and an epoch clock would stamp the first one there.
+    init(now: Date = Date(timeIntervalSince1970: 1000)) {
+        instant = Mutex(now)
+    }
+
+    var now: Date { instant.withLock { $0 } }
+
+    /// Named for setting rather than advancing, since the source that owns one
+    /// derives the instant: moving this clock alone produces no audio.
+    func set(to next: Date) {
+        instant.withLock { $0 = next }
+    }
+}
+
+/// A device that is not there. Either it delivers a fixed number of buffers and
+/// finishes, or it delivers whatever the time a test hands it was worth.
 /// Held to the same contract as the microphone by `verifyAudioSourceContract`.
 actor FakeAudioSource: AudioSource {
     private enum State {
         case idle, running, stopped
     }
 
-    private let buffers: Int
+    /// Where the buffers come from: its own count, or the test's clock.
+    private enum Drive {
+        case buffers(Int)
+        case clock
+    }
+
+    private let drive: Drive
+    private let clock: ManualTimeSource
+    private let origin: TimeInterval
     private let sampleRate: Double
+    private let bufferDuration: TimeInterval
+    private let frames: Int
+
+    private var elapsed: TimeInterval = 0
+    private var produced = 0
+    private var continuation: AsyncStream<CapturedAudio>.Continuation?
     private var state = State.idle
 
-    init(buffers: Int, sampleRate: Double = 48000) {
-        self.buffers = buffers
+    /// Self-driving: the stream carries that many buffers and finishes at once.
+    init(buffers: Int, sampleRate: Double = 48000, bufferDuration: TimeInterval = 0.1) {
+        self.init(
+            drive: .buffers(buffers),
+            clock: ManualTimeSource(),
+            sampleRate: sampleRate,
+            bufferDuration: bufferDuration
+        )
+    }
+
+    /// Clock-driven: nothing is delivered until `advance(by:)` moves the clock,
+    /// and the stream stays open until this source is stopped.
+    init(clock: ManualTimeSource, sampleRate: Double = 48000, bufferDuration: TimeInterval = 0.1) {
+        self.init(
+            drive: .clock,
+            clock: clock,
+            sampleRate: sampleRate,
+            bufferDuration: bufferDuration
+        )
+    }
+
+    private init(
+        drive: Drive,
+        clock: ManualTimeSource,
+        sampleRate: Double,
+        bufferDuration: TimeInterval
+    ) {
+        precondition(bufferDuration > 0, "a buffer of no duration never fills")
+        self.drive = drive
+        self.clock = clock
+        self.origin = clock.now.timeIntervalSince1970
         self.sampleRate = sampleRate
+        self.bufferDuration = bufferDuration
+        self.frames = Int(sampleRate * bufferDuration)
     }
 
     func start() async throws -> AsyncStream<CapturedAudio> {
         guard state == .idle else { throw CaptureAlreadyStarted() }
         state = .running
 
-        let frames = Int(sampleRate / 10)
-        let audio = (0..<buffers)
-            .map { index in
-                CapturedAudio(
-                    hostTime: 1000 + Double(index) / 10,
-                    sampleRate: sampleRate,
-                    samples: Array(repeating: 0.25, count: frames)
-                )
-            }
-        return AsyncStream { continuation in
-            audio.forEach { continuation.yield($0) }
+        let (stream, continuation) = AsyncStream<CapturedAudio>.makeStream()
+        self.continuation = continuation
+        if case .buffers(let count) = drive {
+            advance(by: Double(count) * bufferDuration)
             continuation.finish()
+        }
+        return stream
+    }
+
+    /// Moves the clock and delivers the buffers that instant went past. Time the
+    /// device spent producing is what makes a buffer, so a caller that never
+    /// advances hears nothing at all.
+    func advance(by interval: TimeInterval) {
+        precondition(interval >= 0, "a device does not un-produce audio")
+        // Time passing before start, or after stop, would leave the buffers it
+        // was worth yielded into nothing and gone without a trace.
+        precondition(state == .running, "a source that is not running produces nothing")
+        elapsed += interval
+        clock.set(to: Date(timeIntervalSince1970: origin + elapsed))
+
+        // Slack of a nanosecond, since three tenths of a second is not three
+        // buffers of a tenth once both are Doubles.
+        while Double(produced + 1) * bufferDuration <= elapsed + 1e-9 {
+            let audio = CapturedAudio(
+                hostTime: origin + Double(produced) * bufferDuration,
+                sampleRate: sampleRate,
+                samples: Array(repeating: 0.25, count: frames)
+            )
+            continuation?.yield(audio)
+            produced += 1
         }
     }
 
     func stop() async {
         guard state == .running else { return }
         state = .stopped
+        continuation?.finish()
+        continuation = nil
     }
 }
 
