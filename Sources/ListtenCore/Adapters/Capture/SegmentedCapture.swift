@@ -12,6 +12,10 @@ public actor SegmentedCapture: AudioCapturing {
         public let sampleRate: Double
     }
 
+    /// Confirming needs a capture to confirm: there is nothing held before one
+    /// starts, and nowhere to hand it once the sources ended or it has stopped.
+    public struct CaptureNotRunning: Error, Equatable {}
+
     private struct OpenFile {
         let file: AVAudioFile
         let format: AVAudioFormat
@@ -23,34 +27,86 @@ public actor SegmentedCapture: AudioCapturing {
     private let rotateEvery: TimeInterval
 
     private var continuation: AsyncStream<Segment>.Continuation?
+    /// Whether the stream can still carry a segment, which a live continuation
+    /// alone does not say: the sources ending finishes it without clearing it.
+    private var isRunning = false
     private var writers: [Task<Void, Never>] = []
     private var supervisor: Task<Void, Never>?
     private var accumulators: [Track: SegmentAccumulator] = [:]
     private var open: [Track: OpenFile] = [:]
     private var anchor: TimeInterval?
     private var writeFailure: (any Error)?
+    private var preRoll: PreRoll?
 
+    /// A positive `preRoll` holds that many seconds in memory and writes nothing
+    /// until `confirm()`, so the stream carries no segment before the user has
+    /// answered. Zero, the default, writes from the first buffer.
     public init(
         sources: [Track: any AudioSource],
         directory: URL,
-        rotateEvery: TimeInterval = 45
+        rotateEvery: TimeInterval = 45,
+        preRoll: TimeInterval = 0
     ) {
         precondition(rotateEvery > 0, "a rotation of zero closes a segment per buffer")
+        precondition(preRoll >= 0, "a pre-roll cannot reach forwards")
         self.sources = sources
         self.directory = directory
         self.rotateEvery = rotateEvery
+        self.preRoll = preRoll > 0 ? PreRoll(window: preRoll) : nil
     }
 
-    public func start() throws -> AsyncStream<Segment> {
+    /// Frames the ring is holding for a session nobody has answered for yet.
+    public var preRollFrames: Int { preRoll?.frames ?? 0 }
+
+    /// The user said yes. What the ring holds becomes the opening of the first
+    /// segment and the ring is done: everything after this is written as it
+    /// arrives. Refusing is simply never calling this, which costs nothing and
+    /// leaves nothing behind.
+    ///
+    /// Confirming twice, or confirming a capture with no pre-roll, writes
+    /// nothing: the audio was handed over already. Confirming one that is not
+    /// running is refused rather than ignored, since a drain with nowhere to
+    /// yield leaves files on disk that no session ever accounts for.
+    public func confirm() throws {
+        guard isRunning else { throw CaptureNotRunning() }
+        guard var pending = preRoll else { return }
+        preRoll = nil
+        for held in pending.draining() {
+            try write(held.audio, to: held.track)
+        }
+    }
+
+    /// Returns once every device is running, not once they have been asked to:
+    /// a caller that stops immediately afterwards would otherwise race a source
+    /// into starting after it was told to stop.
+    public func start() async throws -> AsyncStream<Segment> {
         guard continuation == nil else { throw CaptureAlreadyStarted() }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let (stream, continuation) = AsyncStream<Segment>.makeStream()
         self.continuation = continuation
 
-        for (track, source) in sources {
-            writers.append(Task { await self.consume(track, from: source) })
+        // Marked running only once every source is, and unwound if one refuses:
+        // a half-started capture that still looks started drains confirm() into
+        // a stream nobody reads, and blocks the retry that would have worked.
+        do {
+            for (track, source) in sources {
+                let audio = try await source.start()
+                writers.append(Task { await self.consume(track, from: audio) })
+            }
+        } catch {
+            for writer in writers {
+                writer.cancel()
+            }
+            for source in sources.values {
+                await source.stop()
+            }
+            writers = []
+            continuation.finish()
+            self.continuation = nil
+            throw error
         }
+        isRunning = true
 
         // Every source ending means no more audio is coming, so the stream ends
         // there. Waiting for stop instead would hang any caller that drains the
@@ -66,6 +122,7 @@ public actor SegmentedCapture: AudioCapturing {
     }
 
     private func sourcesEnded() {
+        isRunning = false
         continuation?.finish()
     }
 
@@ -91,6 +148,7 @@ public actor SegmentedCapture: AudioCapturing {
             open[track] = nil
         }
 
+        isRunning = false
         continuation?.finish()
         continuation = nil
         accumulators = [:]
@@ -106,9 +164,15 @@ public actor SegmentedCapture: AudioCapturing {
         return partials
     }
 
-    private func consume(_ track: Track, from source: any AudioSource) async {
+    private func consume(_ track: Track, from stream: AsyncStream<CapturedAudio>) async {
         do {
-            for await audio in try await source.start() {
+            for await audio in stream {
+                // While the ring is holding, nothing reaches disk: the answer
+                // has not come, and a refusal must leave no trace of the audio.
+                guard preRoll == nil else {
+                    preRoll?.append(audio, to: track)
+                    continue
+                }
                 try write(audio, to: track)
             }
         } catch {
