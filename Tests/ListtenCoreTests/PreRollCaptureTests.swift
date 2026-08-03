@@ -164,6 +164,37 @@ func confirmingACaptureThatIsNotRunningIsRefused() async throws {
     }
 }
 
+/// The other half of that: a source that ends on its own finishes the stream
+/// without anyone stopping the capture, which is what a device that vanishes for
+/// good does. A drain then has nowhere to yield either, so it would write files
+/// and report none of them.
+@Test("confirming after the sources ended is refused")
+func confirmingAfterTheSourcesEndedIsRefused() async throws {
+    try await withTemporaryDirectory { directory in
+        // 240 buffers of 0.5s is 120 seconds, delivered and finished at once.
+        let subject = SegmentedCapture(
+            sources: [
+                .microphone: FakeAudioSource(
+                    buffers: 240,
+                    sampleRate: rate,
+                    bufferDuration: bufferDuration
+                )
+            ],
+            directory: directory,
+            rotateEvery: 45,
+            preRoll: 60
+        )
+
+        // Draining to completion is the proof the sources ended.
+        _ = await drained(try await subject.start())
+
+        await #expect(throws: SegmentedCapture.CaptureNotRunning.self) {
+            try await subject.confirm()
+        }
+        #expect(try bytesOnDisk(in: directory) == 0, "a drain nobody could hear left audio behind")
+    }
+}
+
 private func drained(_ stream: AsyncStream<Segment>) async -> [Segment] {
     var received: [Segment] = []
     for await segment in stream {

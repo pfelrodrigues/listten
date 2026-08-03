@@ -13,7 +13,7 @@ public actor SegmentedCapture: AudioCapturing {
     }
 
     /// Confirming needs a capture to confirm: there is nothing held before one
-    /// starts, and nothing left to hold once it has stopped.
+    /// starts, and nowhere to hand it once the sources ended or it has stopped.
     public struct CaptureNotRunning: Error, Equatable {}
 
     private struct OpenFile {
@@ -27,6 +27,9 @@ public actor SegmentedCapture: AudioCapturing {
     private let rotateEvery: TimeInterval
 
     private var continuation: AsyncStream<Segment>.Continuation?
+    /// Whether the stream can still carry a segment, which a live continuation
+    /// alone does not say: the sources ending finishes it without clearing it.
+    private var isRunning = false
     private var writers: [Task<Void, Never>] = []
     private var supervisor: Task<Void, Never>?
     private var accumulators: [Track: SegmentAccumulator] = [:]
@@ -65,7 +68,7 @@ public actor SegmentedCapture: AudioCapturing {
     /// running is refused rather than ignored, since a drain with nowhere to
     /// yield leaves files on disk that no session ever accounts for.
     public func confirm() throws {
-        guard continuation != nil else { throw CaptureNotRunning() }
+        guard isRunning else { throw CaptureNotRunning() }
         guard var pending = preRoll else { return }
         preRoll = nil
         for held in pending.draining() {
@@ -82,6 +85,7 @@ public actor SegmentedCapture: AudioCapturing {
 
         let (stream, continuation) = AsyncStream<Segment>.makeStream()
         self.continuation = continuation
+        isRunning = true
 
         for (track, source) in sources {
             let audio = try await source.start()
@@ -102,6 +106,7 @@ public actor SegmentedCapture: AudioCapturing {
     }
 
     private func sourcesEnded() {
+        isRunning = false
         continuation?.finish()
     }
 
@@ -127,6 +132,7 @@ public actor SegmentedCapture: AudioCapturing {
             open[track] = nil
         }
 
+        isRunning = false
         continuation?.finish()
         continuation = nil
         accumulators = [:]
