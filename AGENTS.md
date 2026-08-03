@@ -37,13 +37,14 @@ about AppKit or the CLI.
 Adapters  →  Ports  →  Application  →  Domain
 ```
 
-Four rules are enforced by tests rather than by convention, in
+Five rules are enforced by tests rather than by convention, in
 `ArchitectureTests.swift`:
 
 - `Domain` imports nothing but `Foundation`
 - `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
 - every directory in the core is one of the four layers
+- every port has an implementation outside the tests
 
 A rule that scans a directory which is not there fails, rather than reporting no
 violations. A guard that quietly stops covering anything is worse than no guard,

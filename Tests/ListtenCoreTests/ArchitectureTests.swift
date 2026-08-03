@@ -130,6 +130,59 @@ func recognisesDiscardedErrors(source: String, discards: Bool) {
     #expect(discardsErrors(in: source) == discards)
 }
 
+/// A port whose only implementation is a fake is a contract production never
+/// agreed to. That has cost this project three separate defects, so the rule is
+/// a test rather than a habit: every port names something real.
+@Test("every port has an implementation outside the tests")
+func everyPortIsImplementedInProduction() throws {
+    let ports = try swiftFiles(in: "ListtenCore/Ports")
+        .flatMap { try declaredProtocols(in: String(contentsOf: $0, encoding: .utf8)) }
+    #expect(!ports.isEmpty, "no ports found, so this rule measured nothing")
+
+    let sources = try (swiftFiles(in: "ListtenCore") + swiftFiles(in: "listten"))
+        .filter { !$0.path.contains("/Ports/") }
+        .map { try String(contentsOf: $0, encoding: .utf8) }
+
+    for port in ports {
+        let implemented = sources.contains { conforms(to: port, in: $0) }
+        #expect(implemented, "\(port) is a port nothing implements outside the tests")
+    }
+}
+
+private func declaredProtocols(in source: String) throws -> [String] {
+    source.split(separator: "\n")
+        .compactMap { line in
+            guard line.hasPrefix("public protocol ") else { return nil }
+            return
+                line
+                .dropFirst("public protocol ".count)
+                .prefix { $0.isLetter || $0.isNumber }
+                .description
+        }
+}
+
+private let declarationPrefixes = [
+    "public ", "private ", "internal ", "fileprivate ", "package ",
+    "final ", "actor ", "struct ", "class ", "enum ", "extension ",
+]
+
+/// A declaration that adopts it, not a mention of it: `any Port` as a parameter
+/// is a use, and a use is what a fake already provides.
+private func conforms(to port: String, in source: String) -> Bool {
+    source.split(separator: "\n")
+        .contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard
+                declarationPrefixes.contains(where: { trimmed.hasPrefix($0) })
+            else { return false }
+            guard let inheritance = trimmed.split(separator: ":").dropFirst().first else {
+                return false
+            }
+            return inheritance.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .contains(Substring(port))
+        }
+}
+
 /// The coverage gate targets Domain and Application by name and exempts
 /// Adapters, so a directory outside all three would carry no target at all.
 /// A file at the root of the core is fine: it is visible in any listing, while
