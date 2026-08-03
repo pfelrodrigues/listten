@@ -9,6 +9,12 @@ import Foundation
 /// nobody can answer it any more, and nothing was recorded. Every other
 /// unfinished state is left for the pipeline step that owns it.
 public struct ResumeInterrupted: Sendable {
+    /// Raised after the readable sessions are already resolved, so state that
+    /// cannot be read costs the meeting it describes and no other.
+    public struct UnreadableSessions: Error, Equatable {
+        public let ids: [String]
+    }
+
     private let sessions: any SessionStoring
     private let minimumDuration: TimeInterval
 
@@ -18,8 +24,9 @@ public struct ResumeInterrupted: Sendable {
     }
 
     public func callAsFunction() async throws -> [Session] {
+        let unfinished = try await sessions.unfinished()
         var resolved: [Session] = []
-        for session in try await sessions.unfinished() {
+        for session in unfinished.sessions {
             let outcome: Session
             switch session.state {
             case .recording: outcome = try session.stopping(minimumDuration: minimumDuration)
@@ -28,6 +35,12 @@ public struct ResumeInterrupted: Sendable {
             }
             try await sessions.save(outcome)
             resolved.append(outcome)
+        }
+
+        // Reported last, so what could be resolved is already saved: a session
+        // nobody can read is still a session lost.
+        guard unfinished.unreadable.isEmpty else {
+            throw UnreadableSessions(ids: unfinished.unreadable)
         }
         return resolved
     }

@@ -2,13 +2,32 @@ import Foundation
 
 /// Where sessions are kept between runs, so an interrupted one can be resumed.
 public protocol SessionStoring: Sendable {
+    /// Replaces whatever was held for that id: the last state saved wins.
     func save(_ session: Session) async throws
+
+    /// Nil means the session was never saved. State that exists but cannot be
+    /// read is an error, since recovery reads nil as nothing left to do.
     func load(id: String) async throws -> Session?
 
-    /// Ordered by id, which sorts chronologically. An implementation free to
-    /// return any order would make recovery depend on storage internals, and a
-    /// fake that happened to be tidier than production would hide it.
-    func unfinished() async throws -> [Session]
+    /// A scan of everything still open. Both lists are ordered by id, which
+    /// sorts chronologically. An implementation free to return any order would
+    /// make recovery depend on storage internals, and a fake that happened to be
+    /// tidier than production would hide it.
+    func unfinished() async throws -> UnfinishedSessions
+}
+
+/// What a scan found. State that cannot be read is reported beside the sessions
+/// that can, rather than as a failure of the scan: one session's storage is not
+/// the store, and recovery that gives up on the first corrupt file loses every
+/// healthy meeting to save one.
+public struct UnfinishedSessions: Sendable, Equatable {
+    public let sessions: [Session]
+    public let unreadable: [String]
+
+    public init(sessions: [Session], unreadable: [String] = []) {
+        self.sessions = sessions
+        self.unreadable = unreadable
+    }
 }
 
 public struct CaptureAlreadyStarted: Error, Equatable {}

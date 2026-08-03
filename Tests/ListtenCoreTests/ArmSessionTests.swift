@@ -24,7 +24,7 @@ func undeliverablePromptFailsArming() async throws {
 
     await #expect(throws: PromptUndeliverable.self) { try await arm() }
 
-    let armed = try await store.unfinished()
+    let armed = try await store.unfinished().sessions
     #expect(armed.map(\.state) == [.armed])
     // One attempt for that session: an undelivered prompt is not worth repeating.
     #expect(await prompts.attempts == armed.map(\.id))
