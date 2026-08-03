@@ -251,6 +251,48 @@ func unreadableProgressIsReportedLikeUnreadableState() async throws {
     #expect(try await store.load(id: "lost")?.state == .recording)
 }
 
+/// Against the real log, since a torn tail is dropped by design and never
+/// throws: only a terminated line that does not decode reaches this path, and a
+/// fake told to fail cannot prove the log on disk behaves the same. Both sources
+/// of unreadable state are named together, in one order, so a caller reading the
+/// report does not have to know which of the two files was damaged.
+@Test("a progress log that cannot be read is named beside state that cannot be read")
+func unreadableProgressOnDiskCostsOneMeeting() async throws {
+    let root = temporaryRoot()
+    let store = FileSessionStore(root: root)
+    for id in ["2026-01-01-aaa", "2026-01-02-bbb", "2026-01-03-ccc"] {
+        try await store.save(try recording(id, duration: 600))
+    }
+    try Data("{\"completion\":\n".utf8)
+        .write(
+            to:
+                root
+                .appending(path: "2026-01-01-aaa")
+                .appending(path: SessionProgressLogs.logFileName)
+        )
+    try Data(#"{"id":"2026-01-03-ccc","started"#.utf8)
+        .write(
+            to:
+                root
+                .appending(path: "2026-01-03-ccc")
+                .appending(path: FileSessionStore.stateFileName)
+        )
+
+    await #expect(
+        throws: ResumeInterrupted.UnreadableSessions(ids: ["2026-01-01-aaa", "2026-01-03-ccc"])
+    ) {
+        _ = try await ResumeInterrupted(
+            sessions: store,
+            progress: SessionProgressLogs(root: root),
+            minimumDuration: 30
+        )()
+    }
+
+    #expect(try await store.load(id: "2026-01-02-bbb")?.state == .recorded)
+    #expect(try await store.load(id: "2026-01-01-aaa")?.state == .recording)
+    try FileManager.default.removeItem(at: root)
+}
+
 /// The crash the two-phase pair is for, staged on the real log: the completion
 /// was half written when the process died, so the line is dropped and the step
 /// reads as interrupted rather than done.
