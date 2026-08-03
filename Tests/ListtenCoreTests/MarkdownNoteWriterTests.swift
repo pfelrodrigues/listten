@@ -3,20 +3,37 @@ import Testing
 
 @testable import ListtenCore
 
-private let meeting = MeetingNote(
-    title: "Weekly sync",
-    summary: "Migration slipped a week.",
-    actionItems: ["Paulo drafts the migration plan", "Ana books the room"],
-    transcript: Transcript(lines: [
-        TranscriptLine(speaker: "microphone", start: 0, end: 2, text: "Shall we start?"),
-        TranscriptLine(speaker: "system", start: 2, end: 4, text: "Give me a second."),
-    ])
-)
+// A computed property because building a line can throw, and a file-scope
+// constant has nowhere to throw to.
+private var meeting: MeetingNote {
+    get throws {
+        MeetingNote(
+            title: "Weekly sync",
+            summary: "Migration slipped a week.",
+            actionItems: ["Paulo drafts the migration plan", "Ana books the room"],
+            transcript: Transcript(lines: [
+                try TranscriptLine(
+                    speaker: "microphone",
+                    start: 0,
+                    end: 2,
+                    text: "Shall we start?"
+                ),
+                try TranscriptLine(
+                    speaker: "system",
+                    start: 2,
+                    end: 4,
+                    text: "Give me a second."
+                ),
+            ])
+        )
+    }
+}
 
 @Test("the note is markdown a person can read with nothing else installed")
-func noteReadsAsMarkdown() {
+func noteReadsAsMarkdown() throws {
+    let rendered = try MarkdownNoteWriter.markdown(for: meeting)
     #expect(
-        MarkdownNoteWriter.markdown(for: meeting) == """
+        rendered == """
             # Weekly sync
 
             Migration slipped a week.
@@ -80,7 +97,7 @@ func missingDestinationIsNeverCreated() async throws {
     )
 
     do {
-        let landed = try await writer.write(meeting, for: "alpha")
+        let landed = try await writer.write(try meeting, for: "alpha")
         Issue.record("the note was delivered to \(landed.delivered.path)")
     } catch let failure as NoteNotDelivered {
         #expect(
@@ -116,7 +133,7 @@ func readOnlyDestinationFailsOnTheCopy() async throws {
     )
 
     do {
-        let landed = try await writer.write(meeting, for: "alpha")
+        let landed = try await writer.write(try meeting, for: "alpha")
         Issue.record("the note was delivered to \(landed.delivered.path)")
     } catch let failure as NoteNotDelivered {
         #expect(
@@ -136,8 +153,8 @@ func rewritingASessionReplacesItsNote() async throws {
     let sessions = root.appending(path: "Sessions")
     let writer = MarkdownNoteWriter(sessionsRoot: sessions, destination: destination)
 
-    let first = try await writer.write(meeting, for: "alpha")
-    let second = try await writer.write(meeting, for: "alpha")
+    let first = try await writer.write(try meeting, for: "alpha")
+    let second = try await writer.write(try meeting, for: "alpha")
 
     #expect(first.kept == second.kept)
     #expect(

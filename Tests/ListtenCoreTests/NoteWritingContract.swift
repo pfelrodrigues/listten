@@ -27,8 +27,8 @@ func verifyNoteWritingContract(
         summary: "Migration slipped a week. The room booking is still open.",
         actionItems: ["Paulo drafts the migration plan", "Ana books the room"],
         transcript: Transcript(lines: [
-            TranscriptLine(speaker: "microphone", start: 0, end: 2, text: "Shall we start?"),
-            TranscriptLine(speaker: "system", start: 2, end: 4, text: "Give me a second."),
+            try TranscriptLine(speaker: "microphone", start: 0, end: 2, text: "Shall we start?"),
+            try TranscriptLine(speaker: "system", start: 2, end: 4, text: "Give me a second."),
         ])
     )
 
@@ -63,7 +63,7 @@ func verifyNoteWritingContract(
         summary: "The room is booked. Migration is done.",
         actionItems: ["Ana closes the ticket"],
         transcript: Transcript(lines: [
-            TranscriptLine(speaker: "microphone", start: 0, end: 1, text: "That is everything.")
+            try TranscriptLine(speaker: "microphone", start: 0, end: 1, text: "That is everything.")
         ])
     )
     let second = try await subject.writer.write(namesake, for: "bravo")
