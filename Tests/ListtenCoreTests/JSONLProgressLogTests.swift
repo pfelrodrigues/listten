@@ -77,6 +77,35 @@ func tornLastLineIsDropped() throws {
     }
 }
 
+/// Without this the first append after a crash fuses with the torn line, and
+/// the fused line is terminated, so the tail rule no longer drops it: every
+/// checkpoint written before the crash is buried behind a line that throws.
+@Test("an append after a torn line leaves the checkpoints before it readable")
+func appendAfterATornLineKeepsEarlierCheckpoints() throws {
+    try withTemporaryLog { log, url in
+        try log.append(closed)
+        try log.append(transcribed)
+        try appendRaw(String(try encoded(.chunkTranscribed(index: 1)).dropLast(6)), to: url)
+
+        try log.append(.chunkTranscribed(index: 2))
+
+        let read = try log.checkpoints()
+        #expect(read == [closed, transcribed, .chunkTranscribed(index: 2)])
+    }
+}
+
+@Test("a log torn during its very first append still takes the next one")
+func appendAfterATornFirstLineStartsTheLogOver() throws {
+    try withTemporaryLog { log, url in
+        try appendRaw(String(try encoded(closed).dropLast(6)), to: url)
+
+        try log.append(transcribed)
+
+        let read = try log.checkpoints()
+        #expect(read == [transcribed])
+    }
+}
+
 @Test("a terminated line that does not decode is corruption, reported with its number")
 func corruptLineIsReported() throws {
     try withTemporaryLog { log, url in
@@ -123,17 +152,33 @@ func unwritableLogIsReported() throws {
     }
 }
 
-/// Appends are atomic and go to the end of the file, so a second writer neither
-/// overwrites the first nor lands inside one of its lines.
-@Test("two logs on the same path both keep their appends")
-func twoLogsOnTheSamePathBothAppend() throws {
-    try withTemporaryLog { first, url in
-        let second = JSONLProgressLog(url: url)
-        try first.append(closed)
-        try second.append(transcribed)
-        try first.append(.chunkTranscribed(index: 1))
+/// Sequential writers cannot tell O_APPEND from seeking to the end first, so
+/// the writers here race: without the atomic append they compute the same end
+/// and overwrite each other, and the count is what catches it.
+@Test("writers racing on one path each land a whole line")
+func racingWritersEachLandAWholeLine() throws {
+    try withTemporaryLog { log, url in
+        let writers = 8
+        let each = 64
 
-        let read = try second.checkpoints()
-        #expect(read == [closed, transcribed, .chunkTranscribed(index: 1)])
+        DispatchQueue.concurrentPerform(iterations: writers) { writer in
+            let racing = JSONLProgressLog(url: url)
+            for entry in 0..<each {
+                #expect(throws: Never.self) {
+                    try racing.append(.chunkTranscribed(index: writer * each + entry))
+                }
+            }
+        }
+
+        let read = try log.checkpoints()
+        #expect(read.count == writers * each)
+        #expect(indices(of: read).sorted() == Array(0..<writers * each))
+    }
+}
+
+private func indices(of checkpoints: [Checkpoint]) -> [Int] {
+    checkpoints.compactMap {
+        guard case .chunkTranscribed(let index) = $0 else { return nil }
+        return index
     }
 }
