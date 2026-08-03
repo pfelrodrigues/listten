@@ -88,6 +88,17 @@ func longestVariantWins() {
     )
 }
 
+@Test("two variants covering the same stretch go to the first declared entry")
+func sameLengthVariantsGoToFirstDeclared() {
+    let entries: [Glossary.Entry] = [
+        .init(term: "PR", heardAs: ["pee arr"]),
+        .init(term: "public relations", heardAs: ["pee arr"]),
+    ]
+
+    #expect(Glossary(entries: entries).correcting("pee arr") == "PR")
+    #expect(Glossary(entries: entries.reversed()).correcting("pee arr") == "public relations")
+}
+
 @Test("text the pass walks over character by character survives multi-byte characters")
 func keepsMultiByteCharactersIntact() {
     let glossary = Glossary(entries: [.init(term: "Delphi", heardAs: ["delphy"])])

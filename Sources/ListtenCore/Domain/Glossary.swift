@@ -22,8 +22,9 @@ public struct Glossary: Sendable, Equatable, Codable {
     /// One left-to-right pass over the original text: a stretch already
     /// rewritten is never looked at again, so no entry can rewrite what another
     /// produced. Where several variants match at one position the longest wins,
-    /// which is what keeps the result independent of the order entries are
-    /// declared in.
+    /// which keeps the result independent of the order entries are declared in,
+    /// except where two variants cover the same stretch: there the first
+    /// declared entry wins.
     public func correcting(_ text: String) -> String {
         var result = ""
         var index = text.startIndex
