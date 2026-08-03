@@ -16,6 +16,19 @@ enum Entry {
             print(Listten.version)
         case "--help", "-h":
             printUsage()
+        case "record":
+            let rest = Array(args.dropFirst())
+            await Recording.run(
+                seconds: rest.first.flatMap(Double.init) ?? 60,
+                root: rest.dropFirst().first.map { URL(filePath: $0) } ?? Self.defaultRoot,
+                // Overridable so a short check does not need to run 45 seconds
+                // before it has anything to show.
+                rotateEvery: rest.dropFirst(2).first.flatMap(Double.init) ?? 45
+            )
+        case "resume":
+            await Recording.resume(
+                root: args.dropFirst().first.map { URL(filePath: $0) } ?? Self.defaultRoot
+            )
         case "capture":
             let rest = Array(args.dropFirst())
             await captureFromMicrophone(
@@ -193,6 +206,14 @@ enum Entry {
         exit(0)
     }
 
+    /// ~/Library/Application Support/listten/sessions, the layout the design
+    /// describes and the one a bundled agent will use.
+    static var defaultRoot: URL {
+        URL.applicationSupportDirectory
+            .appending(path: "listten")
+            .appending(path: "sessions")
+    }
+
     private static func printUsage() {
         print(
             """
@@ -200,9 +221,13 @@ enum Entry {
 
             Usage:
               listten                    run the menu bar agent
+              listten record [seconds] [root] [rotation]
+                                         record a session: state, checkpoints
+                                         and audio, under the sessions root
+              listten resume [root]      resolve whatever a previous run left
+                                         open, the way a launch would
               listten capture [seconds] [directory]
-                                         record from the microphone; with a
-                                         directory, write numbered segments
+                                         raw microphone check, no session
 
             Options:
               -v, --version   print the version
