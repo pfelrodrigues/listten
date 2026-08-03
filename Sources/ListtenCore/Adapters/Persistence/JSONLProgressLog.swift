@@ -18,6 +18,9 @@ import Foundation
 ///   which is corruption, and corruption buries every checkpoint before it.
 /// - Any other line that does not decode is corruption and throws. A damaged
 ///   log must not read as a shorter one that happens to parse.
+/// - A log that cannot be read cannot be appended to either, since the tail has
+///   to be read before it can be dropped. Refusing keeps the guarantee above
+///   true instead of quietly making an exception to it.
 /// - A write this small to a regular file is all or nothing, so a short one is
 ///   reported rather than retried: the bytes it left behind are an unfinished
 ///   tail like any other, and the next append drops them.
@@ -40,17 +43,15 @@ public struct JSONLProgressLog: Sendable {
         var line = try JSONEncoder().encode(checkpoint)
         line.append(Self.newline)
 
-        // Dropping the tail means reading it, and a log nobody may read has no
-        // reader to protect, so a write-only one is appended to blind.
-        var descriptor = open(url.path, O_RDWR | O_APPEND | O_CREAT, 0o600)
-        let readable = descriptor >= 0
-        if !readable, errno == EACCES {
-            descriptor = open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-        }
+        // Opened for reading as well as writing because dropping a torn tail
+        // means reading it. A log that cannot be read cannot be repaired, and
+        // appending to one blind fuses the next line onto the tear, so refusing
+        // is the honest answer rather than a limitation.
+        let descriptor = open(url.path, O_RDWR | O_APPEND | O_CREAT, 0o600)
         guard descriptor >= 0 else { throw Failure.unwritable(path: url.path, code: errno) }
         defer { close(descriptor) }
 
-        if readable { try dropUnfinishedTail(descriptor) }
+        try dropUnfinishedTail(descriptor)
 
         let written = line.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
         // Retrying half a line would append the remainder behind whatever else

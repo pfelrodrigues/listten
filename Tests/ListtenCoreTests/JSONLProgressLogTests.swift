@@ -176,18 +176,41 @@ func racingWritersEachLandAWholeLine() throws {
     }
 }
 
-/// A log the owner made write-only cannot be read back by anyone, so the tail
-/// check has nothing left to protect and must not cost the append.
-@Test("a write-only log still takes an append")
-func writeOnlyLogStillTakesAnAppend() throws {
+/// Dropping a torn tail means reading it, so a log that cannot be read cannot be
+/// repaired. Appending to one blind fuses the next line onto the tear and buries
+/// every checkpoint before it, which is the corruption this file exists to stop.
+@Test("a log that cannot be read refuses the append rather than writing blind")
+func unreadableLogRefusesTheAppend() throws {
     try withTemporaryLog { log, url in
         try log.append(closed)
         try FileManager.default.setAttributes([.posixPermissions: 0o200], ofItemAtPath: url.path)
+        // Root would sail past the barrier and make the rest of this vacuous.
+        #expect(!FileManager.default.isReadableFile(atPath: url.path))
 
-        try log.append(transcribed)
+        #expect(throws: JSONLProgressLog.Failure.unwritable(path: url.path, code: EACCES)) {
+            try log.append(transcribed)
+        }
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        #expect(try log.checkpoints() == [closed, transcribed])
+        #expect(try log.checkpoints() == [closed])
+    }
+}
+
+/// The refusal above is not pedantry: this is what writing blind would have
+/// done. The torn line and the one fused onto it are both lost, and so is every
+/// checkpoint that came before them.
+@Test("a torn tail on an unreadable log is never fused over")
+func tornTailOnAnUnreadableLogIsNeverFusedOver() throws {
+    try withTemporaryLog { log, url in
+        try log.append(closed)
+        try appendRaw(String(try encoded(transcribed).dropLast(4)), to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o200], ofItemAtPath: url.path)
+        #expect(!FileManager.default.isReadableFile(atPath: url.path))
+
+        #expect(throws: JSONLProgressLog.Failure.self) { try log.append(transcribed) }
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        #expect(try log.checkpoints() == [closed])
     }
 }
 
