@@ -3,25 +3,57 @@ import Foundation
 @testable import ListtenCore
 
 actor InMemorySessionStore: SessionStoring {
+    /// Without this the fake has no unreadable state to have, so the rule the
+    /// port promises about it would be met by production alone.
+    struct Unreadable: Error {
+        let id: String
+    }
+
     private var stored: [String: Session] = [:]
+    private var corrupted: Set<String> = []
+
+    func corrupt(id: String) {
+        corrupted.insert(id)
+    }
 
     func save(_ session: Session) async throws {
         stored[session.id] = session
     }
 
     func load(id: String) async throws -> Session? {
-        stored[id]
+        guard !corrupted.contains(id) else { throw Unreadable(id: id) }
+        return stored[id]
     }
 
-    func unfinished() async throws -> [Session] {
-        stored.values.filter { !$0.state.isTerminal }.sorted { $0.id < $1.id }
+    func unfinished() async throws -> UnfinishedSessions {
+        UnfinishedSessions(
+            sessions: stored.values
+                .filter { !corrupted.contains($0.id) && !$0.state.isTerminal }
+                .sorted { $0.id < $1.id },
+            unreadable: corrupted.sorted()
+        )
     }
 }
 
+/// Stands for whatever the notification centre refuses with.
+struct PromptUndeliverable: Error, Equatable {}
+
 actor RecordingPromptSpy: RecordingPrompting {
+    private let failure: (any Error)?
+
+    /// Every call, delivered or not, so a caller that asks twice is visible.
+    private(set) var attempts: [String] = []
+
+    /// Only the calls that reached the user.
     private(set) var asked: [String] = []
 
-    func askWhetherToRecord(sessionID: String) async {
+    init(failure: (any Error)? = nil) {
+        self.failure = failure
+    }
+
+    func askWhetherToRecord(sessionID: String) async throws {
+        attempts.append(sessionID)
+        if let failure { throw failure }
         asked.append(sessionID)
     }
 }
@@ -77,8 +109,12 @@ actor FakeAudioCapture: AudioCapturing {
 
     private let length: TimeInterval
     private let rotateEvery: TimeInterval
-    private var closed: TimeInterval = 0
+    private var rotations = 0
     private var state = State.idle
+
+    /// Derived from the count, never accumulated: a running sum drifts and hands
+    /// out an index twice on a rotation that does not divide the length.
+    private var closed: TimeInterval { Double(rotations) * rotateEvery }
 
     init(length: TimeInterval, rotateEvery: TimeInterval) {
         precondition(rotateEvery > 0, "a rotation of zero never advances")
@@ -91,11 +127,9 @@ actor FakeAudioCapture: AudioCapturing {
         state = .running
 
         var rotated: [Segment] = []
-        var index = 0
         while closed + rotateEvery <= length {
-            rotated += segments(index: index, start: closed, duration: rotateEvery)
-            closed += rotateEvery
-            index += 1
+            rotated += segments(index: rotations, start: closed, duration: rotateEvery)
+            rotations += 1
         }
         return AsyncStream { continuation in
             rotated.forEach { continuation.yield($0) }
@@ -109,13 +143,8 @@ actor FakeAudioCapture: AudioCapturing {
 
         let remaining = length - closed
         guard remaining > 0 else { return [] }
-        let partials = segments(
-            index: Int(closed / rotateEvery),
-            start: closed,
-            duration: remaining
-        )
-        closed = length
-        return partials
+        // The next index, not one recomputed from time: the last rotation already used its own.
+        return segments(index: rotations, start: closed, duration: remaining)
     }
 
     /// Both tracks close together, on the same instants.

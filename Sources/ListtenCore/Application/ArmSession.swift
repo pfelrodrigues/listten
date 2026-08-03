@@ -1,7 +1,9 @@
 import Foundation
 
 /// A meeting was detected. The pre-roll buffer is already running; this only
-/// records the intent and asks the user, without writing audio.
+/// records the intent and asks the user, without writing audio. A prompt that
+/// could not be delivered fails the call: the session stays armed on disk, where
+/// startup discards it, rather than waiting for an answer nobody can give.
 public struct ArmSession: Sendable {
     private let sessions: any SessionStoring
     private let prompt: any RecordingPrompting
@@ -18,7 +20,7 @@ public struct ArmSession: Sendable {
         let now = clock.now
         let session = Session(id: Self.identifier(for: now), startedAt: now)
         try await sessions.save(session)
-        await prompt.askWhetherToRecord(sessionID: session.id)
+        try await prompt.askWhetherToRecord(sessionID: session.id)
         return session
     }
 

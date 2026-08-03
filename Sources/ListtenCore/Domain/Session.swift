@@ -5,6 +5,7 @@ import Foundation
 public struct Session: Sendable, Equatable, Codable {
     public enum RuleViolation: Error, Equatable {
         case audioWhileNotRecording(SessionState)
+        case duplicateSegment(track: Track, index: Int)
     }
 
     public let id: String
@@ -24,9 +25,15 @@ public struct Session: Sendable, Equatable, Codable {
         segments.map(\.end).max() ?? 0
     }
 
+    /// A segment is identified by `(track, index)`, not by what it measures: a
+    /// repeat is a replayed log or two logs disagreeing, never audio to record.
     public func appending(_ segment: Segment) throws -> Session {
         guard state.acceptsAudio else {
             throw RuleViolation.audioWhileNotRecording(state)
+        }
+        guard !segments.contains(where: { $0.track == segment.track && $0.index == segment.index })
+        else {
+            throw RuleViolation.duplicateSegment(track: segment.track, index: segment.index)
         }
         var copy = self
         copy.segments.append(segment)

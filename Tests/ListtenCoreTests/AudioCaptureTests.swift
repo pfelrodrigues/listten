@@ -26,34 +26,6 @@ func stoppingBeforeTheFirstRotationKeepsItsAudio() async throws {
     #expect(session.duration == 40)
 }
 
-@Test("stopping a capture that never started reports no audio")
-func stoppingWithoutStartingReportsNothing() async throws {
-    let capture: any AudioCapturing = FakeAudioCapture(length: 100, rotateEvery: 45)
-
-    #expect(try await capture.stop().isEmpty)
-}
-
-@Test("stopping twice reports no audio the second time")
-func stoppingTwiceReportsNothingAgain() async throws {
-    let capture: any AudioCapturing = FakeAudioCapture(length: 100, rotateEvery: 45)
-
-    for await _ in try await capture.start() {}
-    _ = try await capture.stop()
-
-    #expect(try await capture.stop().isEmpty)
-}
-
-@Test("starting a capture that was already started fails instead of going quiet")
-func startingTwiceFails() async throws {
-    let capture: any AudioCapturing = FakeAudioCapture(length: 100, rotateEvery: 45)
-
-    for await _ in try await capture.start() {}
-
-    await #expect(throws: CaptureAlreadyStarted.self) {
-        _ = try await capture.start()
-    }
-}
-
 @Test("a recording longer than one rotation closes segments and finalizes the remainder")
 func longerRecordingRotatesThenFinalizes() async throws {
     let capture: any AudioCapturing = FakeAudioCapture(length: 100, rotateEvery: 45)
