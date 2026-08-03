@@ -29,6 +29,10 @@ run = [
   "mise run bundle release",
 ]
 
+[tasks.kill9]
+description = "Kill a real recording at several points and check recovery (needs a microphone)"
+run = "bash scripts/kill9.sh"
+
 [tasks.bundle]
 description = "Build Listten.app"
 run = "bash scripts/bundle.sh"

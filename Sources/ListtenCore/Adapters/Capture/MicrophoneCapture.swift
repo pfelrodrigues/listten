@@ -21,12 +21,16 @@ public actor MicrophoneCapture: AudioSource {
     private static let maxRestarts = 5
 
     private let engine = AVAudioEngine()
+    /// Allocated once, written only by the audio thread, and read by nobody
+    /// else: the tap folds into it and hands the result straight to the ring.
+    private let mono = MonoScratch(frames: framesPerSlot)
     private var continuation: AsyncStream<CapturedAudio>.Continuation?
     private var configurationObserver: (any NSObjectProtocol)?
     private var ring: CaptureRing?
     private var drain: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
-    private var restartCount = 0
+    private var consecutiveRestarts = 0
+    private var totalRestarts = 0
 
     public init() {}
 
@@ -38,7 +42,7 @@ public actor MicrophoneCapture: AudioSource {
 
     /// How many times the watchdog had to bring the device back. Non-zero means
     /// the recording has gaps that were recovered rather than lost.
-    public var restarts: Int { restartCount }
+    public var restarts: Int { totalRestarts }
 
     public func start() throws -> AsyncStream<CapturedAudio> {
         guard continuation == nil else { throw CaptureAlreadyStarted() }
@@ -46,7 +50,14 @@ public actor MicrophoneCapture: AudioSource {
         let ring = CaptureRing(slots: Self.slots, framesPerSlot: Self.framesPerSlot)
         self.ring = ring
 
-        let (stream, continuation) = AsyncStream<CapturedAudio>.makeStream()
+        // Bounded on purpose. An unbounded stream lets a slow consumer grow
+        // memory without limit while holding raw PCM, and the budget for a whole
+        // capture is 50 MB. Roughly two seconds of slack is more than the drain
+        // needs and far less than a leak.
+        let (stream, continuation) = AsyncStream<CapturedAudio>
+            .makeStream(
+                bufferingPolicy: .bufferingNewest(Self.slots)
+            )
         self.continuation = continuation
 
         installTap(into: ring)
@@ -115,6 +126,10 @@ public actor MicrophoneCapture: AudioSource {
             if delivered > seen {
                 seen = delivered
                 detector.received(at: Self.now())
+                // Audio came back, so the budget below is about consecutive
+                // failures to recover. A lifetime count would kill a long
+                // meeting that survived a handful of separate device swaps.
+                consecutiveRestarts = 0
             }
 
             guard detector.verdict(at: Self.now()) == .stalled else { continue }
@@ -122,7 +137,7 @@ public actor MicrophoneCapture: AudioSource {
             // Restarting forever would hide a device that is never coming back.
             // Ending the stream tells the caller to finalize what it has, which
             // is the same answer a device that vanishes for good already gets.
-            guard restartCount < Self.maxRestarts else {
+            guard consecutiveRestarts < Self.maxRestarts else {
                 tearDown()
                 return
             }
@@ -135,7 +150,10 @@ public actor MicrophoneCapture: AudioSource {
     /// shifting everything that follows.
     private func restartCapture(countingIt counted: Bool) {
         guard let ring, continuation != nil else { return }
-        if counted { restartCount += 1 }
+        if counted {
+            consecutiveRestarts += 1
+            totalRestarts += 1
+        }
 
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -145,10 +163,12 @@ public actor MicrophoneCapture: AudioSource {
         do {
             try engine.start()
         } catch {
-            // The device went away for good. Tearing down ends the stream, which
-            // tells the caller to finalize what it has rather than wait for
-            // audio that is not coming.
-            tearDown()
+            // A device halfway through being swapped refuses to start, and that
+            // is a moment rather than a verdict. Ending the session here reads
+            // to the caller as a clean finish and silently truncates the
+            // meeting, so the watchdog is left to try again; it is the one that
+            // eventually gives up, loudly, after a bounded number of attempts.
+            return
         }
     }
 
@@ -159,18 +179,37 @@ public actor MicrophoneCapture: AudioSource {
     /// Everything inside the tap block runs on the audio thread, where
     /// allocating, locking or waiting would cost recorded audio. It copies into
     /// a slot that already exists and returns.
+    /// A device caught mid-swap reports a format that nothing can be tapped
+    /// with, and AVFoundation answers that with an Objective-C exception, which
+    /// Swift cannot catch and which takes the recording down with the process.
+    /// Skipping leaves the watchdog to try again a moment later.
     private func installTap(into ring: CaptureRing) {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        let sampleRate = format.sampleRate
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, time in
-            guard let channel = buffer.floatChannelData?[0] else { return }
+        // Passing nil means the node's own format, so there is no second
+        // opinion to disagree with; the rate then comes from each buffer, which
+        // is also what makes a device returning at another rate survivable.
+        let mono = self.mono.samples
+        input.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, time in
+            guard let channels = buffer.floatChannelData else { return }
+            let frames = Int(buffer.frameLength)
+            guard frames <= Self.framesPerSlot else { return }
+
+            // Folded into a buffer that already exists, since allocating here
+            // would cost recorded audio.
+            ChannelMixdown.mix(
+                UnsafePointer(channels),
+                channels: Int(buffer.format.channelCount),
+                frames: frames,
+                into: mono
+            )
             _ = ring.write(
-                samples: channel,
-                frames: Int(buffer.frameLength),
+                samples: mono,
+                frames: frames,
                 hostTime: AVAudioTime.seconds(forHostTime: time.hostTime),
-                sampleRate: sampleRate
+                sampleRate: buffer.format.sampleRate
             )
         }
     }

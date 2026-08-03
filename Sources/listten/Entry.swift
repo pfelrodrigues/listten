@@ -16,6 +16,19 @@ enum Entry {
             print(Listten.version)
         case "--help", "-h":
             printUsage()
+        case "record":
+            let rest = Array(args.dropFirst())
+            await Recording.run(
+                seconds: rest.first.flatMap(Double.init) ?? 60,
+                root: rest.dropFirst().first.map { URL(filePath: $0) } ?? Self.defaultRoot,
+                // Overridable so a short check does not need to run 45 seconds
+                // before it has anything to show.
+                rotateEvery: rest.dropFirst(2).first.flatMap(Double.init) ?? 45
+            )
+        case "resume":
+            await Recording.resume(
+                root: args.dropFirst().first.map { URL(filePath: $0) } ?? Self.defaultRoot
+            )
         case "capture":
             let rest = Array(args.dropFirst())
             await captureFromMicrophone(
@@ -100,6 +113,7 @@ enum Entry {
             await microphone.stop()
         }
 
+        let began = Date()
         var timeline: CaptureTimeline?
         var segments: [Segment] = []
         var loudest: Float = 0
@@ -130,7 +144,10 @@ enum Entry {
             sampleRate: rate,
             peak: loudest,
             dropped: await microphone.droppedBuffers,
-            restarts: await microphone.restarts
+            restarts: await microphone.restarts,
+            // Measured, not inferred: silence at the end is a quiet moment, and
+            // a stream that stopped before its time is a lost recording.
+            cutShortBy: seconds - Date().timeIntervalSince(began)
         )
     }
 
@@ -139,11 +156,13 @@ enum Entry {
         sampleRate: Double,
         peak: Float,
         dropped: Int,
-        restarts: Int
+        restarts: Int,
+        cutShortBy: Double
     ) {
         guard let last = segments.last else {
             // The counters are the whole diagnosis when nothing arrived: a
             // watchdog that kept restarting says the device is there and mute.
+            _ = cutShortBy
             print("No audio arrived, after \(restarts) restart(s) and \(dropped) drop(s).")
             print("Check that an input device is selected and that access is granted.")
             exit(1)
@@ -162,6 +181,13 @@ enum Entry {
         print("Gaps:         \(gaps.isEmpty ? "none" : gaps.joined(separator: ", "))")
         print("Dropped:      \(dropped) buffer(s)")
         print("Restarts:     \(restarts)")
+
+        if cutShortBy > 0.5 {
+            print(
+                "Ended early: the capture stopped "
+                    + String(format: "%.1f", cutShortBy) + "s before it was asked to."
+            )
+        }
 
         if dropped > 0 {
             print("Audio was lost: the drain could not keep up with the device.")
@@ -193,6 +219,14 @@ enum Entry {
         exit(0)
     }
 
+    /// ~/Library/Application Support/listten/sessions, the layout the design
+    /// describes and the one a bundled agent will use.
+    static var defaultRoot: URL {
+        URL.applicationSupportDirectory
+            .appending(path: "listten")
+            .appending(path: "sessions")
+    }
+
     private static func printUsage() {
         print(
             """
@@ -200,9 +234,13 @@ enum Entry {
 
             Usage:
               listten                    run the menu bar agent
+              listten record [seconds] [root] [rotation]
+                                         record a session: state, checkpoints
+                                         and audio, under the sessions root
+              listten resume [root]      resolve whatever a previous run left
+                                         open, the way a launch would
               listten capture [seconds] [directory]
-                                         record from the microphone; with a
-                                         directory, write numbered segments
+                                         raw microphone check, no session
 
             Options:
               -v, --version   print the version

@@ -33,12 +33,13 @@ ties grants to bundle identity. Use `scripts/bundle.sh` when testing those.
 
 ### Architecture rules
 
-Four rules are enforced by the test suite rather than by convention:
+Five rules are enforced by the test suite rather than by convention:
 
 - `Domain` imports nothing but `Foundation`
 - `try?` is not allowed anywhere in `ListtenCore`
 - the CLI reaches the domain only through `ListtenCore`
 - every directory in the core is one of the four layers
+- every port has an implementation outside the tests
 
 Warnings are errors in CI, in the pre-push hook and in `mise run check`.
 
