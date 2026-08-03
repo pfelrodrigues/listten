@@ -77,8 +77,12 @@ actor FakeAudioCapture: AudioCapturing {
 
     private let length: TimeInterval
     private let rotateEvery: TimeInterval
-    private var closed: TimeInterval = 0
+    private var rotations = 0
     private var state = State.idle
+
+    /// Derived from the count, never accumulated: a running sum drifts and hands
+    /// out an index twice on a rotation that does not divide the length.
+    private var closed: TimeInterval { Double(rotations) * rotateEvery }
 
     init(length: TimeInterval, rotateEvery: TimeInterval) {
         precondition(rotateEvery > 0, "a rotation of zero never advances")
@@ -91,11 +95,9 @@ actor FakeAudioCapture: AudioCapturing {
         state = .running
 
         var rotated: [Segment] = []
-        var index = 0
         while closed + rotateEvery <= length {
-            rotated += segments(index: index, start: closed, duration: rotateEvery)
-            closed += rotateEvery
-            index += 1
+            rotated += segments(index: rotations, start: closed, duration: rotateEvery)
+            rotations += 1
         }
         return AsyncStream { continuation in
             rotated.forEach { continuation.yield($0) }
@@ -109,13 +111,8 @@ actor FakeAudioCapture: AudioCapturing {
 
         let remaining = length - closed
         guard remaining > 0 else { return [] }
-        let partials = segments(
-            index: Int(closed / rotateEvery),
-            start: closed,
-            duration: remaining
-        )
-        closed = length
-        return partials
+        // The next index, not one recomputed from time: the last rotation already used its own.
+        return segments(index: rotations, start: closed, duration: remaining)
     }
 
     /// Both tracks close together, on the same instants.

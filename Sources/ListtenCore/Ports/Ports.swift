@@ -28,6 +28,11 @@ public protocol AudioSource: Sendable {
 
 /// Delivers audio as finalized segments, both tracks stamped on one clock so
 /// they can be interleaved later.
+///
+/// No `(track, index)` is repeated across `start()` and `stop()`: the session
+/// identifies a segment by that pair and refuses a repeat, so an implementation
+/// that reused an index would lose the audio behind it. Held to this by
+/// `verifyAudioCapturingContract`.
 public protocol AudioCapturing: Sendable {
     /// Segments as they close on rotation. The stream finishes when capture
     /// ends. Throws if this capture was already started: the same audio cannot
