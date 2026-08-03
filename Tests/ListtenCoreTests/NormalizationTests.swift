@@ -35,11 +35,37 @@ func capitalizedNumberIsLeftAlone() {
     #expect(Normalization.normalizing("ask Six about it") == "ask Six about it")
 }
 
+@Test("a capitalized number word protects its whole run, not only itself")
+func capitalizedNumberProtectsTheRun() {
+    #expect(Normalization.normalizing("Twenty five minutes later") == "Twenty five minutes later")
+    #expect(Normalization.normalizing("Twenty-five minutes later") == "Twenty-five minutes later")
+    #expect(Normalization.normalizing("Ten five") == "Ten five")
+    #expect(Normalization.normalizing("seven Eleven") == "seven Eleven")
+}
+
 @Test("two adjacent number words that are not a compound stay words")
 func adjacentNumbersStayWords() {
     #expect(Normalization.normalizing("the call is at ten thirty") == "the call is at ten thirty")
     #expect(Normalization.normalizing("at three thirty pm") == "at three thirty pm")
     #expect(Normalization.normalizing("one two three") == "one two three")
+}
+
+@Test("a lone \"one\" stays a word, since it is as often a pronoun as a quantity")
+func loneOneIsLeftAlone() {
+    #expect(Normalization.normalizing("no one knows") == "no one knows")
+    #expect(Normalization.normalizing("a one-on-one with Ana") == "a one-on-one with Ana")
+    #expect(Normalization.normalizing("one more thing") == "one more thing")
+    #expect(Normalization.normalizing("twenty one people") == "21 people")
+}
+
+@Test("a number that scales the word after it stays a word")
+func scaledNumbersStayWords() {
+    #expect(Normalization.normalizing("two thousand licences") == "two thousand licences")
+    #expect(
+        Normalization.normalizing("one hundred and twenty five people")
+            == "one hundred and twenty five people"
+    )
+    #expect(Normalization.normalizing("seven and eight") == "7 and 8")
 }
 
 @Test("numbers separated by punctuation are separate numbers")
@@ -70,11 +96,19 @@ func meridiemInsideALongerWordIsLeftAlone() {
     #expect(Normalization.normalizing("7 pmi certificates") == "7 pmi certificates")
 }
 
-@Test("text in a language the rules were not written for is untouched")
+@Test("number words in a language the rules were not written for are untouched")
 func foreignTextIsUntouched() {
     let portuguese = "a reunião é às três e meia, com sete pessoas 👨‍👩‍👧"
 
     #expect(Normalization.normalizing(portuguese) == portuguese)
+}
+
+@Test("a foreign word spelled like a meridiem beside a digit is still marked")
+func foreignMeridiemLookalikeIsMarked() {
+    #expect(
+        Normalization.normalizing("wir treffen uns Gleis 3 am Bahnhof")
+            == "wir treffen uns Gleis 3 AM Bahnhof"
+    )
 }
 
 @Test("normalizing what was already normalized changes nothing further")

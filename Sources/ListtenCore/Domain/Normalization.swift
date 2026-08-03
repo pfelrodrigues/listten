@@ -5,8 +5,10 @@ import Foundation
 /// Deliberately conservative, since a recognizer's output is all there is to go
 /// on: only lowercase English number words are touched, because casing is the
 /// only signal that separates a quantity from a name, and a normalization
-/// missed costs less than a name corrupted. Text in a language these rules were
-/// not written for matches nothing and comes back untouched.
+/// missed costs less than a name corrupted. One capitalized word keeps its whole
+/// run as words, so a compound is never half rewritten. Number words in a
+/// language these rules were not written for match nothing; a word spelled like
+/// a meridiem standing right after a digit is the one thing that still matches.
 public enum Normalization {
     /// Numbers first: a meridiem is only recognised beside a digit, so the hour
     /// has to have become one before the marker is looked at.
@@ -22,6 +24,8 @@ public enum Normalization {
         "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60,
         "seventy": 70, "eighty": 80, "ninety": 90,
     ]
+
+    private static let scales: Set<String> = ["hundred", "thousand", "million", "billion"]
 
     private static let tens: Set<String> = [
         "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty",
@@ -87,7 +91,9 @@ public enum Normalization {
         var run: [String] = []
         var cursor = index
 
-        while cursor < pieces.count, case .word(let word) = pieces[cursor], values[word] != nil {
+        while cursor < pieces.count, case .word(let word) = pieces[cursor],
+            continues(run, with: word)
+        {
             run.append(word)
             guard
                 cursor + 2 < pieces.count, case .gap(let gap) = pieces[cursor + 1],
@@ -99,11 +105,25 @@ public enum Normalization {
         return run
     }
 
+    /// A scale word, and the "and" joining the parts of a large number, belong to
+    /// the run without being numerals: "one hundred and twenty five" is one
+    /// quantity, and writing part of it as digits says something else entirely.
+    /// Case-blind, so a capitalized word ends up inside the run rather than
+    /// cutting it in two and leaving the lowercase word after it unprotected.
+    private static func continues(_ run: [String], with word: String) -> Bool {
+        let word = word.lowercased()
+        if values[word] != nil || scales.contains(word) { return true }
+        return word == "and" && run.contains { scales.contains($0.lowercased()) }
+    }
+
     /// A number on its own and a tens-and-unit compound become digits. A longer
     /// run stays as words: two numbers in a row are as often a spoken clock time
     /// as they are two numbers, and "10 30" reads worse than what was said.
     private static func digits(for run: [String]) -> String? {
-        if run.count == 1, let value = values[run[0]] {
+        // Anything the run carries that is not a numeral keeps all of it as words.
+        guard run.allSatisfy({ values[$0] != nil }) else { return nil }
+        // "one" alone is a pronoun as often as a quantity; only a compound settles it.
+        if run.count == 1, run[0] != "one", let value = values[run[0]] {
             return String(value)
         }
         if run.count == 2, tens.contains(run[0]), let ten = values[run[0]],

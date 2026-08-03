@@ -20,8 +20,11 @@ public struct CorrectedTranscript: Sendable, Equatable, Codable {
     ///
     /// The glossary runs first: its variants are what the recognizer wrote, and
     /// normalizing "em four" to "em 4" first would leave nothing for a term
-    /// holding a number to match. Correction touches the words alone, and each
-    /// line goes back through the door that validates its instants.
+    /// holding a number to match. The cost runs the other way: normalization then
+    /// reads what the glossary produced, so a term whose own spelling holds a
+    /// standalone number word comes back with digits. Correction touches the
+    /// words alone, and each line goes back through the door that validates its
+    /// instants.
     public init(raw: Transcript, glossary: Glossary) throws {
         self.raw = raw
         self.corrected = Transcript(
