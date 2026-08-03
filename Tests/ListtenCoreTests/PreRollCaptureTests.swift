@@ -202,3 +202,25 @@ private func drained(_ stream: AsyncStream<Segment>) async -> [Segment] {
     }
     return received
 }
+
+/// A start that threw is a capture that never began. Leaving it looking started
+/// makes confirm() drain into a stream nobody reads and blocks the retry.
+@Test("a source that refuses to start leaves nothing behind")
+func aFailedStartLeavesNothingRunning() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "preroll-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let subject = SegmentedCapture(
+        sources: [.microphone: RefusingAudioSource()],
+        directory: directory,
+        rotateEvery: 5,
+        preRoll: 60
+    )
+
+    await #expect(throws: RefusingAudioSource.Refused.self) { _ = try await subject.start() }
+
+    // Neither half-started nor stuck: confirm refuses, and starting again is
+    // allowed to fail on its own terms rather than on the last attempt's.
+    await #expect(throws: SegmentedCapture.CaptureNotRunning.self) { try await subject.confirm() }
+    await #expect(throws: RefusingAudioSource.Refused.self) { _ = try await subject.start() }
+}

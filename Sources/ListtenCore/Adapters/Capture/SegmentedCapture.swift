@@ -85,12 +85,28 @@ public actor SegmentedCapture: AudioCapturing {
 
         let (stream, continuation) = AsyncStream<Segment>.makeStream()
         self.continuation = continuation
-        isRunning = true
 
-        for (track, source) in sources {
-            let audio = try await source.start()
-            writers.append(Task { await self.consume(track, from: audio) })
+        // Marked running only once every source is, and unwound if one refuses:
+        // a half-started capture that still looks started drains confirm() into
+        // a stream nobody reads, and blocks the retry that would have worked.
+        do {
+            for (track, source) in sources {
+                let audio = try await source.start()
+                writers.append(Task { await self.consume(track, from: audio) })
+            }
+        } catch {
+            for writer in writers {
+                writer.cancel()
+            }
+            for source in sources.values {
+                await source.stop()
+            }
+            writers = []
+            continuation.finish()
+            self.continuation = nil
+            throw error
         }
+        isRunning = true
 
         // Every source ending means no more audio is coming, so the stream ends
         // there. Waiting for stop instead would hang any caller that drains the
