@@ -20,6 +20,7 @@ func interruptedRecordingBecomesRecorded() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: InMemoryProgressLog(),
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -34,6 +35,7 @@ func recoveryAppliesTheSameMinimumAsStopping() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: InMemoryProgressLog(),
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -49,6 +51,7 @@ func armedSessionIsDiscarded() async throws {
     let resolved = try await ResumeInterrupted(
         sessions: store,
         progress: InMemoryProgressLog(),
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -68,6 +71,7 @@ func terminalSessionsAreNotResumed() async throws {
         try await ResumeInterrupted(
             sessions: store,
             progress: InMemoryProgressLog(),
+            audio: FakeRecordedAudio(segments: [:]),
             minimumDuration: 60
         )()
         .resumed.isEmpty
@@ -95,6 +99,7 @@ func unreadableSessionDoesNotBlockRecovery() async throws {
     let recovery = try await ResumeInterrupted(
         sessions: store,
         progress: SessionProgressLogs(root: root),
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 30
     )()
     #expect(recovery.unreadableState == ["2026-01-01-aaa"])
@@ -114,6 +119,7 @@ func nonRecordingUnfinishedSessionIsUntouched() async throws {
         try await ResumeInterrupted(
             sessions: store,
             progress: InMemoryProgressLog(),
+            audio: FakeRecordedAudio(segments: [:]),
             minimumDuration: 60
         )()
         .resumed.isEmpty
@@ -138,6 +144,7 @@ func interruptedStepIsNamed() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -159,6 +166,7 @@ func finishedStepIsNotRedone() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -175,6 +183,7 @@ func interruptedRecordingNamesItsSegment() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -194,6 +203,7 @@ func discardedSessionRedoesNothing() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -218,6 +228,7 @@ func brokenProgressIsLoudAndTakesPrecedence() async throws {
     let recovery = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
     #expect(recovery.brokenProgress == ["broken": .init(completionWithoutIntent: chunk)])
@@ -239,6 +250,7 @@ func unreadableProgressIsReportedLikeUnreadableState() async throws {
     let recovery = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
     // Named under progress, not under state: the state file is intact.
@@ -280,6 +292,7 @@ func unreadableProgressOnDiskCostsOneMeeting() async throws {
     let recovery = try await ResumeInterrupted(
         sessions: store,
         progress: SessionProgressLogs(root: root),
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 30
     )()
     // Each named under the file that is actually damaged.
@@ -318,6 +331,7 @@ func stepTornBetweenItsEndsIsRedone() async throws {
     let resumed = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 

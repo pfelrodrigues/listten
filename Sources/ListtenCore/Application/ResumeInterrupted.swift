@@ -26,12 +26,16 @@ public struct ResumeInterrupted: Sendable {
         /// the above because they are different files, and sending someone to
         /// the wrong one is the expensive part of a bad diagnosis.
         public let unreadableProgress: [String]
+        /// Sessions whose audio directory could not be listed, so a file a
+        /// crash orphaned there could not be looked for.
+        public let unreadableAudio: [String]
         /// Logs that pair up wrong: a completion nobody intended describes work
         /// that cannot have happened, so the session must not be resumed from it.
         public let brokenProgress: [String: ProgressLedger.BrokenLog]
 
         public var isClean: Bool {
-            unreadableState.isEmpty && unreadableProgress.isEmpty && brokenProgress.isEmpty
+            unreadableState.isEmpty && unreadableProgress.isEmpty && unreadableAudio.isEmpty
+                && brokenProgress.isEmpty
         }
     }
 
@@ -44,22 +48,49 @@ public struct ResumeInterrupted: Sendable {
 
     private let sessions: any SessionStoring
     private let progress: any ProgressLogging
+    private let audio: any RecordedAudio
     private let minimumDuration: TimeInterval
 
     public init(
         sessions: any SessionStoring,
         progress: any ProgressLogging,
+        audio: any RecordedAudio,
         minimumDuration: TimeInterval
     ) {
         self.sessions = sessions
         self.progress = progress
+        self.audio = audio
         self.minimumDuration = minimumDuration
+    }
+
+    /// The file carries no start, since where a segment sits on the timeline
+    /// was only ever written into the state. The best available answer is where
+    /// the track's audio had reached, which under-reports if the crash fell
+    /// inside a gap and never over-reports the session.
+    private func adopting(orphans: [SegmentFile], into session: Session) throws -> Session {
+        var grown = session
+        for file in orphans.sorted(by: {
+            ($0.index, $0.track.rawValue) < ($1.index, $1.track.rawValue)
+        }) {
+            let known = grown.segments.filter { $0.track == file.track }
+            guard !known.contains(where: { $0.index == file.index }) else { continue }
+            grown = try grown.appending(
+                Segment(
+                    index: file.index,
+                    track: file.track,
+                    start: known.map(\.end).max() ?? 0,
+                    duration: file.duration
+                )
+            )
+        }
+        return grown
     }
 
     public func callAsFunction() async throws -> Recovery {
         let unfinished = try await sessions.unfinished()
         var resolved: [Resumption] = []
         var unreadableProgress: [String] = []
+        var unreadableAudio: [String] = []
         var broken: [String: ProgressLedger.BrokenLog] = [:]
 
         for session in unfinished.sessions {
@@ -75,6 +106,20 @@ public struct ResumeInterrupted: Sendable {
                 broken[session.id] = failure
             } catch {
                 unreadableProgress.append(session.id)
+            }
+
+            // A file the state does not name is audio a crash caught between
+            // closing it and recording that it closed. It is adopted before the
+            // state is resolved, so the duration the verdict is made against is
+            // the audio that exists rather than the audio that was written down.
+            var session = session
+            do {
+                session = try adopting(
+                    orphans: await audio.segments(for: session.id),
+                    into: session
+                )
+            } catch {
+                unreadableAudio.append(session.id)
             }
 
             let outcome: Session?
@@ -99,6 +144,7 @@ public struct ResumeInterrupted: Sendable {
             resumed: resolved,
             unreadableState: unfinished.unreadable.sorted(),
             unreadableProgress: unreadableProgress.sorted(),
+            unreadableAudio: unreadableAudio.sorted(),
             brokenProgress: broken
         )
     }

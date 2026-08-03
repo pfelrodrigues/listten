@@ -20,6 +20,7 @@ func damagedLogOnABystanderDoesNotFailTheRun() async throws {
     let recovery = try await ResumeInterrupted(
         sessions: store,
         progress: SessionProgressLogs(root: root),
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 
@@ -39,7 +40,12 @@ func isCleanNamesTheDifference() async throws {
             .appending(Segment(index: 0, track: .microphone, start: 0, duration: 90))
     )
 
-    let resume = ResumeInterrupted(sessions: store, progress: progress, minimumDuration: 60)
+    let resume = ResumeInterrupted(
+        sessions: store,
+        progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
+        minimumDuration: 60
+    )
     #expect(try await resume().isClean)
 
     try await store.save(
@@ -68,6 +74,7 @@ func unreadableLogStillResolvesTheSession() async throws {
     let recovery = try await ResumeInterrupted(
         sessions: store,
         progress: progress,
+        audio: FakeRecordedAudio(segments: [:]),
         minimumDuration: 60
     )()
 

@@ -93,6 +93,7 @@ enum Recording {
             let resolved = try await ResumeInterrupted(
                 sessions: store,
                 progress: SessionProgressLogs(root: root),
+                audio: SegmentFiles(root: root),
                 minimumDuration: 1
             )()
             for id in resolved.unreadableState {
@@ -100,6 +101,9 @@ enum Recording {
             }
             for id in resolved.unreadableProgress {
                 print("!! \(id): progress.jsonl could not be read")
+            }
+            for id in resolved.unreadableAudio {
+                print("!! \(id): the audio directory could not be listed")
             }
             for (id, failure) in resolved.brokenProgress.sorted(by: { $0.key < $1.key }) {
                 print("!! \(id): progress log pairs up wrong, \(failure)")

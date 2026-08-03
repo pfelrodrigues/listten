@@ -292,3 +292,23 @@ actor FakeAudioCapture: AudioCapturing {
 struct FixedTimeSource: TimeSource {
     var now = Date(timeIntervalSince1970: 0)
 }
+
+actor FakeRecordedAudio: RecordedAudio {
+    private let stored: [String: [SegmentFile]]
+
+    init(segments: [String: [SegmentFile]]) {
+        stored = segments
+    }
+
+    func segments(for sessionID: String) async throws -> [SegmentFile] {
+        stored[sessionID] ?? []
+    }
+}
+
+struct FailingRecordedAudio: RecordedAudio {
+    struct Unlistable: Error {}
+
+    func segments(for sessionID: String) async throws -> [SegmentFile] {
+        throw Unlistable()
+    }
+}

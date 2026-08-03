@@ -165,3 +165,27 @@ public struct NoteNotDelivered: Error {
 public protocol NoteWriting: Sendable {
     func write(_ note: MeetingNote, for sessionID: String) async throws -> NoteLocation
 }
+
+/// One audio file a capture left behind, described by what the file itself
+/// says. It carries no start: where a segment sits on the session timeline was
+/// never written into the file, only into the state a crash may have taken.
+public struct SegmentFile: Sendable, Equatable {
+    public let track: Track
+    public let index: Int
+    public let duration: TimeInterval
+
+    public init(track: Track, index: Int, duration: TimeInterval) {
+        self.track = track
+        self.index = index
+        self.duration = duration
+    }
+}
+
+/// What a session actually has on disk, whatever its state file remembers.
+///
+/// A segment closes as a file before anything records that it did, so a crash
+/// in that window leaves audio nobody accounts for. Recovery reads this to find
+/// it rather than trusting the log to have been faster than the crash.
+public protocol RecordedAudio: Sendable {
+    func segments(for sessionID: String) async throws -> [SegmentFile]
+}
