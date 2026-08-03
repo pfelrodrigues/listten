@@ -18,13 +18,16 @@ public struct CorrectedTranscript: Sendable, Equatable, Codable {
     /// The only way in, so `corrected` cannot be anything but what the rules
     /// made of `raw`.
     ///
-    /// The glossary runs first: its variants are what the recognizer wrote, and
-    /// normalizing "em four" to "em 4" first would leave nothing for a term
-    /// holding a number to match. The cost runs the other way: normalization then
-    /// reads what the glossary produced, so a term whose own spelling holds a
-    /// standalone number word comes back with digits. Correction touches the
-    /// words alone, and each line goes back through the door that validates its
-    /// instants.
+    /// The glossary is the whole of correction for now. Normalizing number words
+    /// was measured at about a fifth of what the glossary is worth and shipped
+    /// with a cost it could not pay: a word list cannot tell "zero trust", which
+    /// is a term, from "zero licences", which is a count, so it corrupted user
+    /// vocabulary to normalize a count. Correction that makes text worse is not
+    /// correction, so it is out until it can read a span the glossary owns.
+    /// See #80.
+    ///
+    /// Correction touches the words alone, and each line goes back through the
+    /// door that validates its instants.
     public init(raw: Transcript, glossary: Glossary) throws {
         self.raw = raw
         self.corrected = Transcript(
@@ -33,7 +36,7 @@ public struct CorrectedTranscript: Sendable, Equatable, Codable {
                     speaker: line.speaker,
                     start: line.start,
                     end: line.end,
-                    text: Normalization.normalizing(glossary.correcting(line.text))
+                    text: glossary.correcting(line.text)
                 )
             }
         )

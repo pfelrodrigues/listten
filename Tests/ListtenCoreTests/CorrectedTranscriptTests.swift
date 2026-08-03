@@ -21,16 +21,6 @@ func appliesTheGlossary() throws {
     #expect(correction.raw == raw)
 }
 
-@Test("the corrected transcript normalizes numbers and times")
-func appliesNormalization() throws {
-    let raw = Transcript(lines: [try line("we ship twenty five builds at three pm")])
-
-    let correction = try CorrectedTranscript(raw: raw, glossary: Glossary(entries: []))
-
-    #expect(correction.corrected.lines.map(\.text) == ["we ship 25 builds at 3 PM"])
-    #expect(correction.raw.lines.map(\.text) == ["we ship twenty five builds at three pm"])
-}
-
 @Test("the glossary runs first, so a term fusing a letter and a digit survives")
 func glossaryRunsFirst() throws {
     let numbered = Glossary(entries: [.init(term: "M4", heardAs: ["em four"])])
@@ -39,16 +29,6 @@ func glossaryRunsFirst() throws {
     let correction = try CorrectedTranscript(raw: raw, glossary: numbered)
 
     #expect(correction.corrected.lines.map(\.text) == ["the M4 milestone"])
-}
-
-@Test("normalization runs after the glossary, so it rewrites a term holding a number word")
-func normalizationRewritesAGlossaryTerm() throws {
-    let numbered = Glossary(entries: [.init(term: "zero trust", heardAs: ["hero trust"])])
-    let raw = Transcript(lines: [try line("we use hero trust everywhere")])
-
-    let correction = try CorrectedTranscript(raw: raw, glossary: numbered)
-
-    #expect(correction.corrected.lines.map(\.text) == ["we use 0 trust everywhere"])
 }
 
 @Test("correction rewrites the words and nothing else about a line")
