@@ -44,6 +44,12 @@ public actor SessionRecorder {
     private let makeNote: ProcessingFactory
 
     private var state = State.idle
+    private var arming = false
+    /// A segment that never reached the state file. Recovery has to adopt it
+    /// before anything transcribes, so stopping reports rather than processes.
+    private var lostASegment = false
+    private var writing: Task<Void, Never>?
+    private var unwritten: [String: String] = [:]
     private var capture: (any AudioCapturing)?
     private var pump: Task<Void, Never>?
     private var sessionID: String?
@@ -77,6 +83,13 @@ public actor SessionRecorder {
         case .recording, .finishing: return
         default: break
         }
+        // The guard above reads a state that four suspension points below have
+        // not reached yet, so two clicks both pass it, both arm a capture, and
+        // the second overwrites the first: a live device nobody holds a handle
+        // to, recording a meeting nothing can stop. This is the handle.
+        guard !arming else { return }
+        arming = true
+        defer { arming = false }
 
         do {
             let armed = try await ArmSession(sessions: sessions, prompt: prompt, clock: clock)()
@@ -86,6 +99,7 @@ public actor SessionRecorder {
 
             self.capture = capture
             sessionID = armed.id
+            lostASegment = false
             state = .recording(segments: 0, seconds: 0)
 
             pump = Task { [weak self] in
@@ -122,7 +136,11 @@ public actor SessionRecorder {
                 sessions: sessions,
                 minimumDuration: minimumDuration
             )(sessionID: sessionID)
-            if stopped.state == .recorded {
+            if lostASegment {
+                // Whatever `keeping` said is the diagnosis. Reporting the stop
+                // as finished over it would hide the segment that was lost
+                // behind a recording that looks complete.
+            } else if stopped.state == .recorded {
                 writeUp(sessionID)
             } else {
                 // Discarded, so there is no meeting to write up. Processing it
@@ -160,24 +178,77 @@ public actor SessionRecorder {
         writeUp(id)
     }
 
+    /// Chained rather than spawned loose: stopping and starting through one slow
+    /// write-up would otherwise run a pipeline per stop, over the same audio,
+    /// and throw away every result but one.
     private func writeUp(_ id: String) {
         state = .processing(id: id)
-        Task { [weak self] in await self?.settle(id) }
+        let queued = writing
+        writing = Task { [weak self] in
+            await queued?.value
+            await self?.settle(id)
+        }
     }
 
     private func settle(_ id: String) async {
-        let reached: State
         do {
-            reached = .processed(id: id, note: try await makeNote(id).delivered)
+            let note = try await makeNote(id).delivered
+            unwritten[id] = nil
+            // A recording started while this ran owns the state now: what is
+            // happening beats what has finished, and the note is on disk either
+            // way, so the cost is the menu item pointing at it.
+            guard case .processing(let running) = state, running == id else { return }
+            state = .processed(id: id, note: note)
         } catch {
-            reached = .processingFailed(id: id, reason: String(describing: error))
+            // A failure cannot be dropped the way a success can. Losing it
+            // leaves a meeting with no note, nothing said about it, and no id to
+            // run again, so it is recorded where a later state cannot overwrite
+            // it and the menu offers it back.
+            let reason = String(describing: error)
+            unwritten[id] = reason
+            guard case .processing(let running) = state, running == id else { return }
+            state = .processingFailed(id: id, reason: reason)
+        }
+    }
+
+    /// Sessions left on disk with audio and no note, picked up where the last
+    /// run stopped.
+    ///
+    /// Quitting during a write-up, or a crash, leaves a meeting recorded and
+    /// unwritten with nothing that ever looks at it again: recovery resolves the
+    /// states no later step can and hands the rest to the pipeline, and until
+    /// this existed the pipeline was only ever reached by stopping a recording.
+    ///
+    /// Everything after the audio is reproducible, so this is safe on a session
+    /// that was halfway through: it starts again from the audio.
+    public func writeUpWhatIsUnwritten() async {
+        guard case .idle = state else { return }
+
+        let waiting: UnfinishedSessions
+        do {
+            waiting = try await sessions.unfinished()
+        } catch {
+            // One unreadable store is not a reason to refuse to record. The
+            // meetings are still on disk and the next launch asks again.
+            state = .failed("could not look for unwritten notes: \(error)")
+            return
         }
 
-        // A recording started while this ran owns the state now: what is
-        // happening beats what has finished, and the note is still on disk.
-        guard case .processing(let running) = state, running == id else { return }
-        state = reached
+        // Recording and armed belong to recovery, which resolves them before
+        // this runs. What is left is a meeting whose audio is complete and whose
+        // note was never written.
+        for session in waiting.sessions
+        where session.state == .recorded || session.state == .transcribing
+            || session.state == .transcribed || session.state == .summarizing
+        {
+            unwritten[session.id] = unwritten[session.id] ?? "the note was never written"
+        }
     }
+
+    /// Meetings whose note was never written, by session, with what went wrong.
+    /// Survives whatever the recorder is doing now, because a failure that only
+    /// lived in the current state would be lost to the next recording.
+    public func unwrittenNotes() -> [String: String] { unwritten }
 
     /// Wrapped in PerformStep, so an intent lands before the state is saved and
     /// a completion after: a crash between the two leaves a step recovery can
@@ -206,6 +277,11 @@ public actor SessionRecorder {
             return grown
         } catch {
             state = .failed("a segment could not be kept: \(error)")
+            // The write-up would overwrite this with .processing and the real
+            // diagnosis would be gone, replaced by whatever the pipeline made of
+            // a session whose state file is behind its audio. Recovery adopts
+            // the orphan first; this is not the place.
+            lostASegment = true
             return session
         }
     }

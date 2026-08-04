@@ -199,6 +199,17 @@ public struct SegmentFile: Sendable, Equatable {
 /// A segment closes as a file before anything records that it did, so a crash
 /// in that window leaves audio nobody accounts for. Recovery reads this to find
 /// it rather than trusting the log to have been faster than the crash.
+///
+/// Held to these by `verifyRecordedAudioContract`:
+///
+/// - A session that recorded nothing reads as no segments, not as a failure.
+///   Both recovery and processing ask before anything is known to exist, and an
+///   error there would be indistinguishable from audio that cannot be read.
+/// - Every segment comes back as the `(track, index)` it was written as.
+///   Processing refuses a session whose files and segments do not line up, so an
+///   index off by one costs the whole meeting rather than one line of it.
+/// - A duration and a URL that name the audio, so a caller can transcribe it
+///   without knowing how files are laid out.
 public protocol RecordedAudio: Sendable {
     func segments(for sessionID: String) async throws -> [SegmentFile]
 }

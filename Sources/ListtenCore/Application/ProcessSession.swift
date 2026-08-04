@@ -27,6 +27,16 @@ public struct ProcessSession: Sendable {
         public let id: String
     }
 
+    /// Audio that produced no words at all. Almost always the wrong language:
+    /// the model transcribes what it was asked for, hears nothing it recognises,
+    /// and returns cleanly. Writing the note anyway hands back a title and calls
+    /// it a meeting, which is worse than saying so, because the session then
+    /// reads as completed and nobody looks again.
+    public struct NothingTranscribed: Error, Equatable {
+        public let id: String
+        public let language: String
+    }
+
     /// Audio on disk the session does not name, which a crash between closing a
     /// segment and recording that it closed leaves behind. Writing the note
     /// without it would lose that stretch of the meeting for good, since a
@@ -58,7 +68,8 @@ public struct ProcessSession: Sendable {
     private let transcriber: any Transcribing
     private let notes: any NoteWriting
     private let glossary: Glossary
-    private let language: String
+    private let language: LanguageChoice
+    private let detector: any LanguageDetecting
 
     public init(
         sessions: any SessionStoring,
@@ -68,7 +79,8 @@ public struct ProcessSession: Sendable {
         transcriber: any Transcribing,
         notes: any NoteWriting,
         glossary: Glossary,
-        language: String
+        language: LanguageChoice,
+        detector: any LanguageDetecting
     ) {
         self.sessions = sessions
         self.progress = progress
@@ -78,6 +90,7 @@ public struct ProcessSession: Sendable {
         self.notes = notes
         self.glossary = glossary
         self.language = language
+        self.detector = detector
     }
 
     public func callAsFunction(sessionID: String) async throws -> NoteLocation {
@@ -97,7 +110,17 @@ public struct ProcessSession: Sendable {
         try accountFor(files, against: recorded.segments, of: sessionID)
 
         var session = try await advancing(recorded, to: .transcribing)
-        let transcript = try await transcribing(recorded.segments, from: files, of: sessionID)
+        let spoken = try await language.resolved(against: files, using: detector)
+        let transcript = try await transcribing(
+            recorded.segments,
+            from: files,
+            of: sessionID,
+            in: spoken
+        )
+
+        guard !transcript.lines.isEmpty else {
+            throw NothingTranscribed(id: sessionID, language: spoken)
+        }
 
         // Correction is derived and both survive, which is why this is one value
         // rather than a transcript that was overwritten in place.
@@ -130,7 +153,8 @@ public struct ProcessSession: Sendable {
     private func transcribing(
         _ segments: [Segment],
         from files: [SegmentFile],
-        of sessionID: String
+        of sessionID: String,
+        in language: String
     ) async throws -> Transcript {
         var byTrack: [Track: [TranscriptLine]] = [:]
 
@@ -151,7 +175,7 @@ public struct ProcessSession: Sendable {
                 .transcribingSegment(track: segment.track, index: segment.index),
                 of: sessionID
             ) {
-                try await read(file, startingAt: segment.start)
+                try await read(file, startingAt: segment.start, in: language)
             }
             byTrack[segment.track, default: []] += lines
         }
@@ -164,7 +188,8 @@ public struct ProcessSession: Sendable {
 
     private func read(
         _ file: SegmentFile,
-        startingAt offset: TimeInterval
+        startingAt offset: TimeInterval,
+        in language: String
     ) async throws
         -> [TranscriptLine]
     {

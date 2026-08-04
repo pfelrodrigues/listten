@@ -132,6 +132,19 @@ enum Recording {
         }
     }
 
+    /// The same walk the agent makes when a recording stops, reachable without a
+    /// menu bar: it is how a session recorded before this existed gets its note,
+    /// and how a failure is reproduced with the output in front of you.
+    static func process(id: String, root: URL, notes: URL) async {
+        do {
+            let location = try await Composition.processor(root: root, notes: notes)(id)
+            print("note \(location.delivered.path)")
+            print("kept \(location.kept.path)")
+        } catch {
+            fail("could not write the note: \(error)")
+        }
+    }
+
     /// Wrapped in PerformStep, so an intent lands before the state is saved and
     /// a completion after. A crash between the two leaves a step recovery can
     /// name and redo, rather than a segment nobody can account for.

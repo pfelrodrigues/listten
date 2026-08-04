@@ -49,14 +49,3 @@ func theWriterAndTheReaderAgreeOnEverySegment() async throws {
         )
     }
 }
-
-/// Recovery and processing both read this before anything is known to exist, so
-/// nothing on disk has to be told apart from a directory that cannot be read.
-@Test("a session that recorded nothing reads as no segments rather than as a failure")
-func aSessionWithNoAudioReadsAsEmpty() async throws {
-    try await withTemporaryRoot { root in
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-
-        #expect(try await SegmentFiles(root: root).segments(for: session).isEmpty)
-    }
-}

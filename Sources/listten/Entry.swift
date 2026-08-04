@@ -35,6 +35,17 @@ enum Entry {
                 seconds: rest.first.flatMap(Double.init) ?? 5,
                 writingTo: rest.dropFirst().first.map { URL(filePath: $0) }
             )
+        case "process":
+            let rest = Array(args.dropFirst())
+            guard let id = rest.first else {
+                FileHandle.standardError.write(Data("process needs a session id\n".utf8))
+                exit(64)
+            }
+            await Recording.process(
+                id: id,
+                root: rest.dropFirst().first.map { URL(filePath: $0) } ?? Self.defaultRoot,
+                notes: rest.dropFirst(2).first.map { URL(filePath: $0) } ?? Self.defaultNotes
+            )
         case "tap":
             let rest = Array(args.dropFirst())
             captureFromSystem(seconds: rest.first.flatMap(Double.init) ?? 5)
@@ -317,6 +328,9 @@ enum Entry {
                                          and audio, under the sessions root
               listten resume [root]      resolve whatever a previous run left
                                          open, the way a launch would
+              listten process <id> [root] [notes]
+                                         transcribe a recorded session and write
+                                         its note, the same walk the agent makes
               listten capture [seconds] [directory]
                                          raw microphone check, no session
               listten tap [seconds]      raw system audio check, no session

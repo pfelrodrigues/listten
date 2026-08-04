@@ -38,16 +38,31 @@ final class MenuBar: NSObject {
         ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
+
+        // Quitting during a write-up leaves a meeting recorded and unwritten,
+        // and nothing else ever looks at it. Offered rather than started: a
+        // launch is not the moment to spend a minute transcribing without being
+        // asked, and the menu now carries the meeting until somebody does.
+        Task { @MainActor in
+            await recorder.writeUpWhatIsUnwritten()
+            await refresh()
+        }
     }
 
     private var shown: SessionRecorder.State?
+    /// Meetings whose note was never written. Read alongside the state because a
+    /// write-up that failed while the next meeting was recording is not in the
+    /// state at all, and a meeting nobody mentions again is a meeting lost.
+    private var unwritten: [String: String] = [:]
 
     /// Rebuilt only when something changed. Replacing the menu every second is
     /// visible, and replacing it under a menu somebody has open is worse.
     private func refresh() async {
         let state = await recorder.current()
-        guard state != shown else { return }
+        let pending = await recorder.unwrittenNotes()
+        guard state != shown || pending != unwritten else { return }
         shown = state
+        unwritten = pending
         rebuild(for: state)
     }
 
@@ -87,6 +102,12 @@ final class MenuBar: NSObject {
             menu.addItem(action("Write the note again", #selector(processAgain)))
         default:
             break
+        }
+        // Every meeting still without a note, whatever the recorder is doing
+        // now. The one in the state above is already offered, so it is not
+        // offered twice.
+        for id in unwritten.keys.sorted() where id != Self.session(of: state) {
+            menu.addItem(action("Write the note for \(id)", #selector(processPending)))
         }
         if Self.session(of: state) != nil {
             menu.addItem(action("Open this session", #selector(openSession)))
@@ -194,6 +215,17 @@ final class MenuBar: NSObject {
     /// nothing else.
     @objc private func processAgain() {
         guard case .processingFailed(let id, _) = shown else { return }
+        Task { @MainActor in
+            await recorder.process(id: id)
+            await refresh()
+        }
+    }
+
+    /// Which meeting a stale menu item names cannot be read off the state, so it
+    /// is read off the item that was clicked.
+    @objc private func processPending(_ sender: NSMenuItem) {
+        let id = sender.title.replacingOccurrences(of: "Write the note for ", with: "")
+        guard unwritten[id] != nil else { return }
         Task { @MainActor in
             await recorder.process(id: id)
             await refresh()

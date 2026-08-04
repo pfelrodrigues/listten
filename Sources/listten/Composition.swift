@@ -51,12 +51,30 @@ enum Composition {
                 // Nothing loads a glossary yet, and correcting against an empty
                 // one is the identity, so this loses nothing.
                 glossary: Glossary(entries: []),
-                // The Mac's own language, which is the only thing the app knows
-                // about what is being said in the room.
-                language: try ChooseLanguage(installed: engine.capabilities.languages)(
-                    preferring: Locale.current.identifier(.bcp47)
-                )
+                // Worked out from the audio unless the user said otherwise. The
+                // Mac's own language says nothing about the room: this one runs
+                // its menus in English and holds its meetings in Portuguese.
+                language: Self.language(from: engine.capabilities.languages),
+                detector: await SpeechLanguageDetection.installed()
             )(sessionID: sessionID)
+        }
+    }
+
+    /// `LISTTEN_LANGUAGE` overrules detection, which is worth having for a
+    /// meeting held in a language the first minute does not reach and for
+    /// anyone who would rather not pay for the detection at all.
+    private static func language(from installed: Set<String>) -> LanguageChoice {
+        guard let wanted = ProcessInfo.processInfo.environment["LISTTEN_LANGUAGE"] else {
+            return .detected
+        }
+        // Held to the same rule as anything else asked for: a tag with no model
+        // takes the nearest dialect rather than failing every segment. A tag
+        // with nothing near it is passed through, so the failure names what the
+        // user asked for rather than something this substituted.
+        do {
+            return .fixed(try ChooseLanguage(installed: installed)(preferring: wanted))
+        } catch {
+            return .fixed(wanted)
         }
     }
 }

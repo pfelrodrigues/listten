@@ -13,7 +13,7 @@ private let writesANote: SessionRecorder.ProcessingFactory = { _ in
 }
 
 private func recorder(
-    store: InMemorySessionStore = InMemorySessionStore(),
+    store: any SessionStoring = InMemorySessionStore(),
     progress: InMemoryProgressLog = InMemoryProgressLog(),
     prompt: RecordingPromptSpy = RecordingPromptSpy(),
     capture: @escaping SessionRecorder.CaptureFactory,
@@ -135,11 +135,16 @@ func aRecordingTooShortIsReportedDiscarded() async {
     await subject.start()
     await subject.stop()
 
-    guard case .finished(_, let outcome, _) = await subject.current() else {
+    guard case .finished(let id, let outcome, let seconds) = await subject.current() else {
         Issue.record("expected a finished recording")
         return
     }
     #expect(outcome == .discarded)
+    // The rest of the payload, which nothing else pins now that a recorded
+    // session reaches .processed instead: a state naming the wrong session, or
+    // no session, is what a caller would act on.
+    #expect(!id.isEmpty)
+    #expect(seconds == 0.4)
 }
 
 @Test("a capture that refuses to start is named, not swallowed")
@@ -425,6 +430,10 @@ func anUndeliveredNoteSaysWhereItIs() async {
         return
     }
     #expect(reason.contains(keptNote.path))
+    // The path alone is what Swift's reflection prints for any struct holding
+    // one, so asking only for that would hold whether or not the error says
+    // anything a reader can act on.
+    #expect(reason.contains("could not be copied out"), "unreadable: \(reason)")
 }
 
 /// The pipeline reruns a session from its audio, so a retry is this and nothing
@@ -456,4 +465,210 @@ func aFailedWriteUpRunsAgainOnDemand() async {
     }
     #expect(again == id)
     #expect(note == deliveredNote)
+}
+
+/// A failure that only lived in the current state would be lost to whatever
+/// happened next, which for a recorder is the very next meeting. Losing it costs
+/// a meeting its note with nothing said and no session left to run again.
+@Test("a write-up that fails while the next meeting records is still reported")
+func aFailedWriteUpSurvivesTheNextRecording() async {
+    struct Refused: Error {}
+    let released = Gate()
+    let subject = recorder(
+        capture: fakeCapture(length: 10, rotateEvery: 5),
+        process: { _ in
+            await released.wait()
+            throw Refused()
+        }
+    )
+
+    await subject.start()
+    await subject.stop()
+    let lost = await first(of: subject)
+
+    // The next meeting takes the state over while the first is still settling.
+    await subject.start()
+    await released.open()
+
+    // Waiting on the state would not do: the recording already took it, which
+    // is the whole point of this test.
+    var unwritten: [String: String] = [:]
+    for _ in 0..<10_000 where unwritten[lost] == nil {
+        unwritten = await subject.unwrittenNotes()
+        await Task.yield()
+    }
+    #expect(unwritten[lost] != nil, "the failed write-up left nothing behind")
+    #expect(unwritten[lost]?.contains("Refused") == true)
+}
+
+/// The state guard reads a value four suspension points do not reach until
+/// later, so without a handle two clicks both arm a capture and the second
+/// overwrites the first: a device nobody can stop, recording a meeting nothing
+/// will finish.
+@Test("two starts at once arm one recording, not two")
+func concurrentStartsArmOneRecording() async {
+    let armed = Attempts()
+    let subject = recorder(capture: { id in
+        _ = await armed.next()
+        await Task.yield()
+        return FakeAudioCapture(length: 10, rotateEvery: 5)
+    })
+
+    async let first: Void = subject.start()
+    async let second: Void = subject.start()
+    _ = await (first, second)
+
+    let count = await armed.count
+    #expect(count == 1, "armed \(count) captures")
+}
+
+/// Stopping and starting through one slow write-up used to spawn a pipeline per
+/// stop, all over the same audio, with every result but one thrown away.
+@Test("write-ups run one at a time, however often stopping asks for one")
+func writeUpsDoNotPileUp() async {
+    let running = Attempts()
+    let overlapping = Overlap()
+    let released = Gate()
+    let subject = recorder(
+        capture: fakeCapture(length: 10, rotateEvery: 5),
+        process: { _ in
+            await overlapping.entered()
+            _ = await running.next()
+            // Held until every stop has been asked for, so a queue shows one
+            // inside and loose tasks show all three.
+            await released.wait()
+            await overlapping.left()
+            return NoteLocation(kept: keptNote, delivered: deliveredNote)
+        }
+    )
+
+    for _ in 0..<3 {
+        await subject.start()
+        await subject.stop()
+    }
+    await released.open()
+    for _ in 0..<10_000 where await running.count < 3 {
+        await Task.yield()
+    }
+
+    let ran = await running.count
+    let most = await overlapping.most
+    #expect(ran == 3, "ran \(ran) write-ups")
+    #expect(most == 1, "\(most) ran at once")
+}
+
+/// How many ran at the same time, which is the whole question for a queue.
+private actor Overlap {
+    private var running = 0
+    private(set) var most = 0
+
+    func entered() {
+        running += 1
+        most = max(most, running)
+    }
+
+    func left() { running -= 1 }
+}
+
+/// The session a stop is settling, read before anything else takes the state.
+private func first(of subject: SessionRecorder) async -> String {
+    guard case .processing(let id) = await subject.current() else { return "" }
+    return id
+}
+
+/// A segment that never reached the state file leaves audio the session does not
+/// name, which recovery adopts and the pipeline refuses. Writing up anyway would
+/// replace the real diagnosis with whatever the pipeline made of it, and offer a
+/// retry that cannot work until recovery has run.
+@Test("a recording that lost a segment is reported, not written up")
+func aRecordingThatLostASegmentIsNotWrittenUp() async {
+    let asked = Attempts()
+    let subject = recorder(
+        store: StoreThatRefusesOneSave(refusing: 3),
+        capture: fakeCapture(length: 10, rotateEvery: 5),
+        process: { _ in
+            _ = await asked.next()
+            return NoteLocation(kept: keptNote, delivered: deliveredNote)
+        }
+    )
+
+    await subject.start()
+    await subject.stop()
+
+    guard case .failed(let reason) = await subject.current() else {
+        Issue.record("expected a failure, got \(await subject.current())")
+        return
+    }
+    #expect(reason.contains("segment could not be kept"), "reported \(reason)")
+    #expect(await asked.count == 0, "a note was written from a session missing a segment")
+}
+
+/// Quitting during a write-up, or a crash, leaves a meeting recorded with no
+/// note and nothing that ever looks at it again. The next launch has to find it.
+@Test("a meeting left unwritten by a previous run is offered on the next one")
+func anUnwrittenMeetingSurvivesARestart() async throws {
+    let store = InMemorySessionStore()
+    let stranded = try Session(id: "left-behind", startedAt: .init(timeIntervalSince1970: 0))
+        .applying(.confirm)
+        .appending(try Segment(index: 0, track: .microphone, start: 0, duration: 45))
+        .applying(.stopRecording)
+    try await store.save(stranded)
+    // Halfway through the pipeline, which is where quitting leaves one.
+    try await store.save(try stranded.applying(.startTranscribing))
+
+    let subject = recorder(store: store, capture: fakeCapture(length: 10, rotateEvery: 5))
+    await subject.writeUpWhatIsUnwritten()
+
+    #expect(await subject.unwrittenNotes()["left-behind"] != nil)
+}
+
+/// A recording in progress belongs to recovery, not to this: adopting it as
+/// unwritten would offer a note for a meeting still being held.
+@Test("a session still recording is not offered as an unwritten note")
+func aRecordingSessionIsNotOfferedAsUnwritten() async throws {
+    let store = InMemorySessionStore()
+    try await store.save(
+        try Session(id: "in-progress", startedAt: .init(timeIntervalSince1970: 0))
+            .applying(.confirm)
+    )
+
+    let subject = recorder(store: store, capture: fakeCapture(length: 10, rotateEvery: 5))
+    await subject.writeUpWhatIsUnwritten()
+
+    #expect(await subject.unwrittenNotes().isEmpty)
+}
+
+/// A sessions directory that will not read is worth saying out loud: the
+/// meetings are there and nothing can find out what they are.
+@Test("a store that cannot be listed is reported rather than passed over")
+func anUnlistableStoreIsReported() async {
+    let subject = recorder(
+        store: StoreThatCannotBeListed(),
+        capture: fakeCapture(length: 10, rotateEvery: 5)
+    )
+
+    await subject.writeUpWhatIsUnwritten()
+
+    guard case .failed(let reason) = await subject.current() else {
+        Issue.record("expected a failure, got \(await subject.current())")
+        return
+    }
+    #expect(reason.contains("unwritten notes"))
+}
+
+/// Asked while a meeting is being recorded, which a launch cannot be but a
+/// second call can. Adopting anything then would offer notes for a recording in
+/// progress.
+@Test("looking for unwritten notes does nothing while a recording runs")
+func lookingForUnwrittenNotesIsIgnoredWhileRecording() async {
+    let subject = recorder(capture: fakeCapture(length: 10, rotateEvery: 5))
+
+    await subject.start()
+    await subject.writeUpWhatIsUnwritten()
+
+    #expect(await subject.unwrittenNotes().isEmpty)
+    guard case .recording = await subject.current() else {
+        Issue.record("the recording was disturbed: \(await subject.current())")
+        return
+    }
 }

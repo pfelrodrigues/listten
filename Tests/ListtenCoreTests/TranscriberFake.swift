@@ -24,14 +24,21 @@ actor FakeTranscriber: Transcribing {
     /// refusal counts here and never counts against a retry budget.
     private(set) var attempts: [TranscriptionRequest] = []
 
+    /// Whether it returns any lines at all. A backend asked for a language
+    /// nobody in the room is speaking finishes cleanly with nothing, which is
+    /// how a meeting becomes an empty note.
+    private let hears: Bool
+
     init(
         capabilities: TranscriptionCapabilities = .fake,
         faults: [TranscriptionFailure] = [],
-        deliveredBeforeFault: Int = 0
+        deliveredBeforeFault: Int = 0,
+        hears: Bool = true
     ) {
         self.capabilities = capabilities
         self.faults = faults
         self.deliveredBeforeFault = deliveredBeforeFault
+        self.hears = hears
     }
 
     func transcribe(
@@ -49,7 +56,7 @@ actor FakeTranscriber: Transcribing {
             throw TranscriptionFailure.multitrackUnsupported(tracks: request.audio.count)
         }
 
-        let events = Self.events(for: request, capabilities: capabilities)
+        let events = hears ? Self.events(for: request, capabilities: capabilities) : []
         let fault = faults.isEmpty ? nil : faults.removeFirst()
 
         return AsyncThrowingStream { continuation in
