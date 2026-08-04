@@ -90,6 +90,12 @@ func aRecordedSessionBecomesANote() async throws {
     let kept = try #require(await wired.notes.contents(of: keptNote(session.id)))
     #expect(kept.contains(session.id), "the note does not name its meeting")
     #expect(location.delivered.lastPathComponent.hasSuffix(".md"))
+    // The note has to hold what was said. Checking the title and the state alone
+    // could not tell a transcribed meeting from a title page, and a mutation
+    // that transcribed nothing at all passed this test before these two lines.
+    for spoken in FakeTranscriber.spoken[.microphone] ?? [] {
+        #expect(kept.contains(spoken.text), "the note leaves out \(spoken.text)")
+    }
 }
 
 /// The constraint the design turns on: the raw transcript survives whatever
@@ -171,7 +177,7 @@ func aSessionStillRecordingIsRefused() async throws {
         .applying(.confirm)
     let wired = try await wire(session: recording, files: [file(.microphone, 0, 45)])
 
-    await #expect(throws: ProcessSession.NotRecorded(id: "s1", state: .recording)) {
+    await #expect(throws: ProcessSession.NotProcessable(id: "s1", state: .recording)) {
         _ = try await wired.process(sessionID: "s1")
     }
 }
@@ -221,18 +227,26 @@ func aFailedTranscriptionWritesNoNote() async throws {
     #expect(try await wired.store.load(id: session.id)?.state == .transcribing)
 }
 
-@Test("a segment on disk the session never recorded is not transcribed")
-func anUnrecordedFileIsIgnored() async throws {
+/// Audio the session does not name is audio recovery should have adopted.
+/// Writing the note without it would lose that stretch for good, since a
+/// completed session is terminal and recovery never looks at one again.
+@Test("a file on disk the session never recorded stops the run rather than being dropped")
+func anUnaccountedFileStopsTheRun() async throws {
     let session = try recordedSession(segments: [try segment(.microphone, 0, start: 0, 45)])
     let wired = try await wire(
         session: session,
         files: [file(.microphone, 0, 45), file(.microphone, 7, 45)]
     )
 
-    _ = try await wired.process(sessionID: session.id)
-
-    let ledger = try ProgressLedger(await wired.progress.checkpoints(for: session.id))
-    #expect(!ledger.finished.contains(.transcribingSegment(track: .microphone, index: 7)))
+    await #expect(
+        throws: ProcessSession.UnaccountedAudio(id: session.id, track: .microphone, index: 7)
+    ) {
+        _ = try await wired.process(sessionID: session.id)
+    }
+    #expect(
+        await wired.notes.contents(of: keptNote(session.id)) == nil,
+        "a note was written while audio went unaccounted for"
+    )
 }
 
 /// The other direction from the test above, and the one that matters: a segment
@@ -269,4 +283,48 @@ func aSystemOnlySessionBecomesANote() async throws {
     let kept = try #require(await wired.transcripts.load(for: session.id))
     #expect(!kept.corrected.lines.isEmpty)
     #expect(try await wired.store.load(id: session.id)?.state == .completed)
+}
+
+/// The point of the whole design: audio is the truth and everything after it is
+/// reproducible, so a run that died part-way through is picked up rather than
+/// stranded. The state machine has no arc back to recorded, so a session left in
+/// any of the states this walks through has to be accepted where it stands.
+@Test(
+    "a run that died part-way through is picked up where it stands",
+    arguments: [SessionState.transcribing, .transcribed, .summarizing]
+)
+func aHalfProcessedSessionIsPickedUp(stranded: SessionState) async throws {
+    var session = try recordedSession(segments: [try segment(.microphone, 0, start: 0, 45)])
+    for event in [SessionEvent.startTranscribing, .finishTranscribing, .startSummarizing] {
+        guard session.state != stranded else { break }
+        session = try session.applying(event)
+    }
+    try #require(session.state == stranded)
+    let wired = try await wire(session: session, files: [file(.microphone, 0, 45)])
+
+    _ = try await wired.process(sessionID: session.id)
+
+    #expect(try await wired.store.load(id: session.id)?.state == .completed)
+    let kept = try #require(await wired.notes.contents(of: keptNote(session.id)))
+    for spoken in FakeTranscriber.spoken[.microphone] ?? [] {
+        #expect(kept.contains(spoken.text), "the resumed run left out \(spoken.text)")
+    }
+}
+
+/// The other side of it: completed is terminal, and running this again would
+/// write a second note over a meeting already dealt with.
+@Test("a session already completed is refused rather than processed twice")
+func aCompletedSessionIsRefused() async throws {
+    var session = try recordedSession(segments: [try segment(.microphone, 0, start: 0, 45)])
+    for event in [
+        SessionEvent.startTranscribing, .finishTranscribing, .startSummarizing, .complete,
+    ] {
+        session = try session.applying(event)
+    }
+    let wired = try await wire(session: session, files: [file(.microphone, 0, 45)])
+
+    await #expect(throws: ProcessSession.NotProcessable(id: session.id, state: .completed)) {
+        _ = try await wired.process(sessionID: session.id)
+    }
+    #expect(await wired.notes.contents(of: keptNote(session.id)) == nil)
 }

@@ -200,6 +200,18 @@ public protocol RecordedAudio: Sendable {
 /// written from. Correction is derived, never destructive, and a store that only
 /// held the corrected one would make that sentence false the first time a
 /// glossary entry was wrong.
+///
+/// Held to these by `verifyTranscriptStoringContract`:
+///
+/// - What was saved comes back whole, both transcripts, lines and instants
+///   included.
+/// - A session nothing was saved for loads as nil. Absence is not an empty
+///   transcript: a caller told a meeting produced no words would write the note
+///   and close the session, and the words would be gone.
+/// - Sessions do not see each other, and saving again for one replaces only
+///   that one.
+/// - A transcript that exists and cannot be read throws rather than loading as
+///   nil, for the same reason: nil means nothing was ever made.
 public protocol TranscriptStoring: Sendable {
     func save(_ transcript: CorrectedTranscript, for sessionID: String) async throws
     func load(for sessionID: String) async throws -> CorrectedTranscript?
