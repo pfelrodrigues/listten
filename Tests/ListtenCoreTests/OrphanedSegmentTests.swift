@@ -18,8 +18,18 @@ func orphanedSegmentIsAdopted() async throws {
     // Index 1 reached disk; the process died before anything said so.
     let audio = FakeRecordedAudio(segments: [
         "aaa": [
-            SegmentFile(track: .microphone, index: 0, duration: 5),
-            SegmentFile(track: .microphone, index: 1, duration: 3.2),
+            SegmentFile(
+                track: .microphone,
+                index: 0,
+                duration: 5,
+                url: URL(filePath: "/memory/0.caf")
+            ),
+            SegmentFile(
+                track: .microphone,
+                index: 1,
+                duration: 3.2,
+                url: URL(filePath: "/memory/1.caf")
+            ),
         ]
     ])
 
@@ -43,7 +53,14 @@ func adoptionIsIdempotent() async throws {
         try Session(id: "aaa", startedAt: .init(timeIntervalSince1970: 0)).applying(.confirm)
     )
     let audio = FakeRecordedAudio(segments: [
-        "aaa": [SegmentFile(track: .microphone, index: 0, duration: 4)]
+        "aaa": [
+            SegmentFile(
+                track: .microphone,
+                index: 0,
+                duration: 4,
+                url: URL(filePath: "/memory/0.caf")
+            )
+        ]
     ])
     let resume = ResumeInterrupted(
         sessions: store,

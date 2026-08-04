@@ -343,3 +343,15 @@ actor StoreThatRefusesToSave: SessionStoring {
         UnfinishedSessions(sessions: stored.values.filter { !$0.state.isTerminal })
     }
 }
+
+actor InMemoryTranscripts: TranscriptStoring {
+    private var stored: [String: CorrectedTranscript] = [:]
+
+    func save(_ transcript: CorrectedTranscript, for sessionID: String) async throws {
+        stored[sessionID] = transcript
+    }
+
+    func load(for sessionID: String) async throws -> CorrectedTranscript? {
+        stored[sessionID]
+    }
+}
