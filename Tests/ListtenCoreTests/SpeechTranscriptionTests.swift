@@ -75,7 +75,12 @@ private func remove(_ url: URL) {
     try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
 }
 
-@Test("the backend declares only the languages whose model is on this machine")
+/// Opt-in like the rest: on a machine with no model the declared set and the
+/// installed set are both empty, so the comparison holds while checking nothing.
+@Test(
+    "the backend declares only the languages whose model is on this machine",
+    .enabled(if: ProcessInfo.processInfo.environment["LISTTEN_SPEECH_MODEL"] == "1")
+)
 func declaresInstalledLanguagesOnly() async {
     let subject = await SpeechTranscription.installed()
     let installed = Set(await SpeechTranscriber.installedLocales.map { $0.identifier(.bcp47) })
@@ -150,7 +155,10 @@ func refusesUnreadableAudio() async {
 
 /// Silence produces no words, and the engine marks a silent stretch with
 /// punctuation. A transcript made of full stops is noise a reader steps over.
-@Test("silence yields no lines rather than lines holding punctuation")
+@Test(
+    "silence yields no lines rather than lines holding punctuation",
+    .enabled(if: ProcessInfo.processInfo.environment["LISTTEN_SPEECH_MODEL"] == "1")
+)
 func silenceYieldsNothing() async throws {
     let subject = await SpeechTranscription.installed()
     try #require(subject.capabilities.languages.contains("pt-BR"))
