@@ -49,6 +49,25 @@ public protocol ProgressLogging: Sendable {
     func checkpoints(for sessionID: String) async throws -> [Checkpoint]
 }
 
+/// Where the transcript that grows during the meeting is appended, so a program
+/// of the user's choosing has context while the meeting is still happening.
+///
+/// Write-only, and deliberately: nothing in this product ever reads that file,
+/// so a reader on the port would exist only to be tested. Whoever runs the
+/// contract supplies its own way of reading back.
+///
+/// Held to these by `verifyLiveTranscriptWritingContract`:
+///
+/// - Lines come back in the order they were appended. The file is the
+///   chronology, and nothing sorts it afterwards.
+/// - One session's lines are never another's, and a session nothing was written
+///   for holds none.
+/// - The first append creates the log, so a line can be written before anything
+///   else about the session has reached disk.
+public protocol LiveTranscriptWriting: Sendable {
+    func append(_ line: LiveLine, for sessionID: String) async throws
+}
+
 public struct CaptureAlreadyStarted: Error, Equatable {}
 
 /// One audio device, delivering buffers as it produces them. The microphone and
@@ -62,6 +81,33 @@ public protocol AudioSource: Sendable {
     /// Idempotent: stopping a source that never started, or stopping one twice,
     /// is not an error. Held to this by `verifyAudioSourceContract`.
     func stop() async
+}
+
+/// Where audio goes while the recording is being written, for anything that
+/// follows the meeting as it happens.
+///
+/// `hand` is neither `async` nor `throws`, and that is the whole point of it
+/// being a protocol rather than a stream handed around: it is called on the task
+/// writing the recording to disk, so a consumer must not be able to suspend that
+/// task or throw into the loop that keeps it running. Audio is the one thing
+/// here that cannot be reproduced.
+///
+/// Held to these by `verifyLiveAudioSinkContract`:
+///
+/// - What was handed over arrives in the order it was handed over, each buffer
+///   with the track it came from.
+/// - Everything handed over before `finish()` was either delivered or counted in
+///   `dropped`. Silence there would look exactly like a quiet meeting.
+/// - Handing over after `finish()` is ignored: no delivery, no crash, and not a
+///   drop either. End of input is not audio the transcript lost.
+/// - `endedEarly` says audio was handed over after `finish()`. A consumer that
+///   died mid-meeting costs everything after it and no buffer is ever counted as
+///   dropped, so without this the transcript is short and nothing says so.
+public protocol LiveAudioSink: Sendable {
+    func hand(_ live: LiveAudio)
+    func finish()
+    var dropped: Int { get }
+    var endedEarly: Bool { get }
 }
 
 /// Delivers audio as finalized segments, both tracks stamped on one clock so

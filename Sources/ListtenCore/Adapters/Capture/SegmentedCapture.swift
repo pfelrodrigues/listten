@@ -37,15 +37,21 @@ public actor SegmentedCapture: AudioCapturing {
     private var anchor: TimeInterval?
     private var writeFailure: (any Error)?
     private var preRoll: PreRoll?
+    private let live: (any LiveAudioSink)?
 
     /// A positive `preRoll` holds that many seconds in memory and writes nothing
     /// until `confirm()`, so the stream carries no segment before the user has
     /// answered. Zero, the default, writes from the first buffer.
+    ///
+    /// A `live` sink is handed every buffer that reached disk. It is minted per
+    /// capture and never reused: it is finished on every way out of one, and a
+    /// finished sink takes nothing more.
     public init(
         sources: [Track: any AudioSource],
         directory: URL,
         rotateEvery: TimeInterval = 45,
-        preRoll: TimeInterval = 0
+        preRoll: TimeInterval = 0,
+        live: (any LiveAudioSink)? = nil
     ) {
         precondition(rotateEvery > 0, "a rotation of zero closes a segment per buffer")
         precondition(preRoll >= 0, "a pre-roll cannot reach forwards")
@@ -53,6 +59,7 @@ public actor SegmentedCapture: AudioCapturing {
         self.directory = directory
         self.rotateEvery = rotateEvery
         self.preRoll = preRoll > 0 ? PreRoll(window: preRoll) : nil
+        self.live = live
     }
 
     /// Frames the ring is holding for a session nobody has answered for yet.
@@ -72,7 +79,11 @@ public actor SegmentedCapture: AudioCapturing {
         guard var pending = preRoll else { return }
         preRoll = nil
         for held in pending.draining() {
-            try write(held.audio, to: held.track)
+            // The held minute goes to disk only. Forwarding a whole minute at
+            // once would either hold it twice in memory or, on a bounded sink,
+            // silently keep the last few buffers of it and open the live
+            // transcript mid-sentence with nothing saying so.
+            _ = try write(held.audio, to: held.track)
         }
     }
 
@@ -103,6 +114,10 @@ public actor SegmentedCapture: AudioCapturing {
             }
             writers = []
             continuation.finish()
+            // Nobody is reading it yet, since the live side is only spawned once
+            // start returns. Finished anyway, so a sink is never left open for a
+            // capture that never ran.
+            live?.finish()
             self.continuation = nil
             throw error
         }
@@ -124,10 +139,20 @@ public actor SegmentedCapture: AudioCapturing {
     private func sourcesEnded() {
         isRunning = false
         continuation?.finish()
+        // Every writer has finished, so nothing more will be handed over. This
+        // is also what ends the sink of a capture somebody stopped, since
+        // stopping ends the sources and the writers behind them; a second call
+        // in stop would be a line no test could prove was doing anything.
+        live?.finish()
     }
 
     public func stop() async throws -> [Segment] {
-        guard continuation != nil else { return [] }
+        guard continuation != nil else {
+            // Nothing ran, so nothing is coming: a consumer must not be left on
+            // a stream this capture will never end.
+            live?.finish()
+            return []
+        }
 
         for source in sources.values {
             await source.stop()
@@ -173,7 +198,11 @@ public actor SegmentedCapture: AudioCapturing {
                     preRoll?.append(audio, to: track)
                     continue
                 }
-                try write(audio, to: track)
+                // Handed over after the write returned, never before: write
+                // throws rather than returning, so audio reaches the live side
+                // only once it has reached disk.
+                let placement = try write(audio, to: track)
+                live?.hand(LiveAudio(track: track, audio: audio, start: placement.start))
             }
         } catch {
             // AsyncStream carries no failure, so it is held until stop, which is
@@ -183,7 +212,12 @@ public actor SegmentedCapture: AudioCapturing {
         }
     }
 
-    private func write(_ audio: CapturedAudio, to track: Track) throws {
+    /// Hands back where the buffer landed, so a caller following the same audio
+    /// live reads the instant this already worked out.
+    private func write(
+        _ audio: CapturedAudio,
+        to track: Track
+    ) throws -> SegmentAccumulator.Placement {
         // A device swapped mid-session can come back at another rate, and a file
         // written at two rates plays back as neither.
         if let current = open[track], current.format.sampleRate != audio.sampleRate {
@@ -197,9 +231,10 @@ public actor SegmentedCapture: AudioCapturing {
         try file(for: track, index: placement.index, rate: audio.sampleRate)
             .write(from: try buffer(from: audio))
 
-        guard let closed = placement.closed else { return }
+        guard let closed = placement.closed else { return placement }
         open[track] = nil
         continuation?.yield(closed)
+        return placement
     }
 
     /// The anchor is the first buffer any track delivered, not the instant
@@ -212,8 +247,19 @@ public actor SegmentedCapture: AudioCapturing {
     )
         -> SegmentAccumulator
     {
-        let anchor = anchor ?? hostTime
+        // The earliest instant any track has reported, not the first one to
+        // arrive. The two devices start independently and race: measured on a
+        // real recording, the system tap delivered first while the microphone's
+        // buffer was stamped 28ms earlier, and anchoring on the winner made
+        // every microphone buffer older than the anchor. The timeline refuses
+        // those rather than placing them before zero, so the whole recording
+        // failed on which device happened to be quicker.
+        let anchor = min(anchor ?? hostTime, hostTime)
         self.anchor = anchor
+        // A track already accumulating cannot be moved: its segments are
+        // written and their instants are already on the old anchor. Only a
+        // track that has not started yet takes the earlier one, which is the
+        // case this exists for — the first buffer of the second track.
         if let existing = accumulators[track] { return existing }
         let fresh = SegmentAccumulator(track: track, anchor: anchor, rotateEvery: rotateEvery)
         accumulators[track] = fresh

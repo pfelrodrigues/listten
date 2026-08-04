@@ -1,21 +1,29 @@
 import Foundation
 
-/// Progress as an append-only log: one JSON checkpoint per line, never
-/// rewritten, so recovery costs a read rather than a database.
+/// Why an append or a read did not happen. One type across every payload, so a
+/// caller catching a log failure catches all of them.
+public enum JSONLFailure: Error, Equatable {
+    case unwritable(path: String, code: Int32)
+    case partialWrite(path: String)
+    case corruptLine(number: Int)
+}
+
+/// An append-only log: one JSON entry per line, never rewritten, so reading it
+/// back costs a read rather than a database.
 ///
 /// What a reader may rely on:
 ///
 /// - Each append is one `O_APPEND` write of a whole line, so writers never land
 ///   inside each other's lines and a crash can only tear the last one.
-/// - Checkpoints come back in the order they were appended. The log is the
+/// - Entries come back in the order they were appended. The log is the
 ///   chronology; nothing is sorted or renumbered on read.
-/// - A missing or empty file holds no checkpoints. A session that never got far
-///   enough to checkpoint is not a failure.
+/// - A missing or empty file holds no entries. A session that never got far
+///   enough to write one is not a failure.
 /// - An unterminated last line is dropped. The newline is written with the line
 ///   it ends, so a line without one is a write that did not finish.
 /// - Both sides honour that: the next append removes the unfinished tail before
 ///   it writes, since a line fused onto one ends up terminated and undecodable,
-///   which is corruption, and corruption buries every checkpoint before it.
+///   which is corruption, and corruption buries every entry before it.
 /// - Any other line that does not decode is corruption and throws. A damaged
 ///   log must not read as a shorter one that happens to parse.
 /// - A log that cannot be read cannot be appended to either, since the tail has
@@ -24,14 +32,10 @@ import Foundation
 /// - A write this small to a regular file is all or nothing, so a short one is
 ///   reported rather than retried: the bytes it left behind are an unfinished
 ///   tail like any other, and the next append drops them.
-public struct JSONLProgressLog: Sendable {
-    public enum Failure: Error, Equatable {
-        case unwritable(path: String, code: Int32)
-        case partialWrite(path: String)
-        case corruptLine(number: Int)
-    }
+public struct JSONLLog<Entry: Codable & Sendable>: Sendable {
+    public typealias Failure = JSONLFailure
 
-    private static let newline = UInt8(ascii: "\n")
+    private static var newline: UInt8 { UInt8(ascii: "\n") }
 
     private let url: URL
 
@@ -39,8 +43,8 @@ public struct JSONLProgressLog: Sendable {
         self.url = url
     }
 
-    public func append(_ checkpoint: Checkpoint) throws {
-        var line = try JSONEncoder().encode(checkpoint)
+    public func append(_ entry: Entry) throws {
+        var line = try JSONEncoder().encode(entry)
         line.append(Self.newline)
 
         // Opened for reading as well as writing because dropping a torn tail
@@ -60,7 +64,7 @@ public struct JSONLProgressLog: Sendable {
     }
 
     /// Writing behind a torn line would fuse the two into one terminated line
-    /// the reader cannot decode, burying every checkpoint before it.
+    /// the reader cannot decode, burying every entry before it.
     func dropUnfinishedTail(_ descriptor: Int32) throws {
         var status = stat()
         guard fstat(descriptor, &status) == 0 else {
@@ -87,7 +91,7 @@ public struct JSONLProgressLog: Sendable {
         }
     }
 
-    public func checkpoints() throws -> [Checkpoint] {
+    public func entries() throws -> [Entry] {
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         let stored = try Data(contentsOf: url)
 
@@ -104,10 +108,13 @@ public struct JSONLProgressLog: Sendable {
         return try lines.enumerated()
             .map { number, line in
                 do {
-                    return try decoder.decode(Checkpoint.self, from: Data(line))
+                    return try decoder.decode(Entry.self, from: Data(line))
                 } catch {
                     throw Failure.corruptLine(number: number + 1)
                 }
             }
     }
 }
+
+/// Progress written as one of these, which is what the log was first built for.
+public typealias JSONLProgressLog = JSONLLog<Checkpoint>

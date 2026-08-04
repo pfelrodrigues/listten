@@ -70,13 +70,17 @@ private func waitForRing(
     Issue.record("the ring never reached \(frames) frames", sourceLocation: sourceLocation)
 }
 
-private func capture(in directory: URL, from sources: [Track: FakeAudioSource]) -> SegmentedCapture
-{
+private func capture(
+    in directory: URL,
+    from sources: [Track: FakeAudioSource],
+    live: (any LiveAudioSink)? = nil
+) -> SegmentedCapture {
     SegmentedCapture(
         sources: sources,
         directory: directory,
         rotateEvery: 45,
-        preRoll: 60
+        preRoll: 60,
+        live: live
     )
 }
 
@@ -192,6 +196,74 @@ func confirmingAfterTheSourcesEndedIsRefused() async throws {
             try await subject.confirm()
         }
         #expect(try bytesOnDisk(in: directory) == 0, "a drain nobody could hear left audio behind")
+    }
+}
+
+/// Nothing reaches disk before the answer, and the live side is downstream of
+/// disk, so nothing reaches a transcript either. It matters more here than for
+/// the files: a refusal must leave no trace, and a line of what was said is a
+/// trace whether or not the audio behind it was kept.
+@Test("a refused session hands nothing to the live side either")
+func aRefusedSessionHandsNothingToTheLiveSide() async throws {
+    try await withTemporaryDirectory { directory in
+        let clock = ManualTimeSource()
+        let devices = sources(driving: clock)
+        let sink = InMemoryLiveAudioSink(capacity: 4096)
+        let subject = capture(in: directory, from: devices, live: sink)
+
+        let stream = try await subject.start()
+        let closed = Task { await drained(stream) }
+
+        await advance(devices, by: 30)
+        await waitForRing(subject, toHold: 30)
+
+        #expect(sink.received.isEmpty, "audio nobody answered for reached a live transcript")
+
+        _ = try await subject.stop()
+        _ = await closed.value
+        #expect(sink.received.isEmpty, "a refused session handed audio over on the way out")
+    }
+}
+
+/// The minute the ring was holding goes to disk and no further. Forwarding it
+/// would either hold a minute of PCM twice against a 50 MB budget, or, on a sink
+/// with a bound, silently keep the last few buffers of it and open the live
+/// transcript mid-sentence. The cost is stated instead: the first live instant
+/// is the confirmation, so a reader sees the gap rather than assuming the
+/// meeting began there. The offline transcript still has the opening.
+@Test("the minute held before the answer reaches disk and not the live side")
+func theDrainedPreRollIsNotForwardedLive() async throws {
+    try await withTemporaryDirectory { directory in
+        let clock = ManualTimeSource()
+        let devices = sources(driving: clock)
+        let sink = InMemoryLiveAudioSink(capacity: 4096)
+        let subject = capture(in: directory, from: devices, live: sink)
+
+        let stream = try await subject.start()
+        let closed = Task { await drained(stream) }
+
+        await advance(devices, by: 30)
+        await waitForRing(subject, toHold: 30)
+        try await subject.confirm()
+
+        await advance(devices, by: 10)
+        _ = try await subject.stop()
+        _ = await closed.value
+
+        // Ten seconds of both tracks at half a second a buffer, and not a frame
+        // of the thirty that were held.
+        #expect(sink.received.count == 40, "the drained minute was forwarded live")
+        for track in Track.allCases {
+            let ofTrack = sink.received.filter { $0.track == track }
+            #expect(
+                ofTrack.first.map { abs($0.start - 30) < 0.001 } == true,
+                "\(track) opened its live transcript at \(ofTrack.first?.start ?? -1)s, not at 30s"
+            )
+            #expect(
+                try framesOnDisk(in: directory, of: track) == AVAudioFramePosition(40 * rate),
+                "\(track) did not write the whole 40s meeting"
+            )
+        }
     }
 }
 

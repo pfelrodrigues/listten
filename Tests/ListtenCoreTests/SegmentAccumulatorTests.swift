@@ -46,6 +46,21 @@ func theBufferThatCrossesTheRotationClosesTheSegment() throws {
     #expect(closed == expected)
 }
 
+/// Anything following the same audio live reads its instant from here, so the
+/// placement carries where the buffer sits rather than only which file it went
+/// into. A second anchor derived elsewhere would have to be proven equal to this
+/// one, and the two tracks line up only because there is one.
+@Test("a placement says where on the session clock the buffer starts")
+func aPlacementCarriesTheBuffersInstant() throws {
+    var subject = accumulator()
+
+    let first = try subject.placing(buffer(at: 1000))
+    let afterAGap = try subject.placing(buffer(at: 1002.5))
+
+    #expect(first.start == 0)
+    #expect(abs(afterAGap.start - 2.5) < 0.001)
+}
+
 @Test("the next buffer after a rotation opens the next file")
 func theNextBufferOpensTheNextFile() throws {
     var subject = accumulator()

@@ -139,10 +139,19 @@ actor FakeAudioSource: AudioSource {
     private var state = State.idle
 
     /// Self-driving: the stream carries that many buffers and finishes at once.
-    init(buffers: Int, sampleRate: Double = 48000, bufferDuration: TimeInterval = 0.1) {
+    ///
+    /// `startingAt` stamps the first buffer, so two sources can be staged
+    /// starting at different instants, which is what two real devices do.
+    init(
+        buffers: Int,
+        sampleRate: Double = 48000,
+        bufferDuration: TimeInterval = 0.1,
+        startingAt origin: TimeInterval? = nil
+    ) {
         self.init(
             drive: .buffers(buffers),
-            clock: ManualTimeSource(),
+            clock: origin.map { ManualTimeSource(now: Date(timeIntervalSince1970: $0)) }
+                ?? ManualTimeSource(),
             sampleRate: sampleRate,
             bufferDuration: bufferDuration
         )
@@ -227,6 +236,97 @@ actor FakeAudioSource: AudioSource {
     }
 }
 
+/// The live transcript kept in memory, standing for the file on disk. Held to
+/// the same contract as it by `verifyLiveTranscriptWritingContract`.
+actor InMemoryLiveTranscripts: LiveTranscriptWriting {
+    /// Without this the fake has no way to refuse a line, so what an orchestrator
+    /// does when the transcript stops taking them would be answered for by a full
+    /// disk alone.
+    struct Refused: Error, Equatable {}
+
+    private var written: [String: [LiveLine]] = [:]
+    private var refusing: Set<Int> = []
+    private var offered = 0
+    private var pause: Duration = .zero
+
+    /// A transcript still being written when the recording stops. Without one, a
+    /// caller that waits for the live side and a caller that walks away from it
+    /// are indistinguishable, since a fake that answers instantly is finished
+    /// either way.
+    func takesItsTime(_ pause: Duration) {
+        self.pause = pause
+    }
+
+    /// Which appends fail, counted from zero across every session. Naming them
+    /// rather than a cut-off is what lets a failure in the middle be staged: a
+    /// disk that filled up for good and one line that did not land are
+    /// different things, and only the second says whether the next one still
+    /// does.
+    func refuse(appends: Set<Int>) {
+        refusing = appends
+    }
+
+    func append(_ line: LiveLine, for sessionID: String) async throws {
+        let index = offered
+        offered += 1
+        guard !refusing.contains(index) else { throw Refused() }
+        if pause != .zero {
+            try await Task.sleep(for: pause)
+        }
+        written[sessionID, default: []].append(line)
+    }
+
+    func lines(for sessionID: String) -> [LiveLine] {
+        written[sessionID] ?? []
+    }
+}
+
+/// A live sink that keeps what it was handed, standing for the streaming one.
+///
+/// Bounded like it is, and dropping the other end of the queue: it keeps the
+/// oldest buffers where the streaming sink keeps the newest. The contract has to
+/// hold for both, which is what stops it from writing down one implementation's
+/// policy as though it were a rule.
+final class InMemoryLiveAudioSink: LiveAudioSink {
+    private struct State {
+        var held: [LiveAudio] = []
+        var dropped = 0
+        var finished = false
+        var handedAfterFinish = false
+    }
+
+    private let capacity: Int
+    private let state = Mutex(State())
+
+    init(capacity: Int = StreamingLiveAudioSink.defaultCapacity) {
+        self.capacity = capacity
+    }
+
+    func hand(_ live: LiveAudio) {
+        state.withLock { state in
+            guard !state.finished else {
+                state.handedAfterFinish = true
+                return
+            }
+            guard state.held.count < capacity else {
+                state.dropped += 1
+                return
+            }
+            state.held.append(live)
+        }
+    }
+
+    func finish() {
+        state.withLock { $0.finished = true }
+    }
+
+    var dropped: Int { state.withLock { $0.dropped } }
+
+    var endedEarly: Bool { state.withLock { $0.handedAfterFinish } }
+
+    var received: [LiveAudio] { state.withLock { $0.held } }
+}
+
 /// Replays a recording of a known length as if it were live, rotating on the
 /// same interval as real capture, so the pipeline can be driven without audio
 /// hardware or permissions.
@@ -286,6 +386,20 @@ actor FakeAudioCapture: AudioCapturing {
         try Track.allCases.map {
             try Segment(index: index, track: $0, start: start, duration: duration)
         }
+    }
+}
+
+/// A capture that runs and then refuses to be finalized, which is what a disk
+/// filling up during the last write looks like from the recorder.
+actor CaptureThatFailsToStop: AudioCapturing {
+    struct Refused: Error, Equatable {}
+
+    func start() async throws -> AsyncStream<Segment> {
+        AsyncStream { $0.finish() }
+    }
+
+    func stop() async throws -> [Segment] {
+        throw Refused()
     }
 }
 

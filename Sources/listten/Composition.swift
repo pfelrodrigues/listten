@@ -7,7 +7,15 @@ enum Composition {
     static func recorder(
         root: URL,
         notes: URL,
-        rotateEvery: TimeInterval = 45
+        rotateEvery: TimeInterval = 45,
+        // The live transcript has to name a language before there is any audio
+        // to work it out from, which is the one thing the note does not have to
+        // do. So this is what the user said, or the Mac's own guess: wrong often
+        // enough that the note detects instead, and cheap enough here that a
+        // meeting in another language costs a live transcript rather than a
+        // record of the meeting.
+        language: String = ProcessInfo.processInfo.environment["LISTTEN_LANGUAGE"]
+            ?? Locale.current.identifier(.bcp47)
     ) -> SessionRecorder {
         SessionRecorder(
             sessions: FileSessionStore(root: root),
@@ -15,15 +23,69 @@ enum Composition {
             prompt: SilentPrompt(),
             clock: SystemTimeSource(),
             minimumDuration: 1,
-            capture: { sessionID in
-                SegmentedCapture(
-                    sources: [.microphone: MicrophoneCapture(), .system: SystemAudioCapture()],
-                    directory: root.appending(path: sessionID).appending(path: "audio"),
-                    rotateEvery: rotateEvery
-                )
-            },
+            capture: arming(root: root, rotateEvery: rotateEvery, language: language),
             process: processor(root: root, notes: notes)
         )
+    }
+
+    /// What a recording is made of, built the same way for the agent and for the
+    /// command line. Kept in one place because `kill9` and `listten record` are
+    /// how capture is checked, and checking a capture the product does not use
+    /// proves nothing about the product.
+    static func arming(
+        root: URL,
+        rotateEvery: TimeInterval = 45,
+        language: String = ProcessInfo.processInfo.environment["LISTTEN_LANGUAGE"]
+            ?? Locale.current.identifier(.bcp47)
+    ) -> SessionRecorder.CaptureFactory {
+        { sessionID in
+            let audio = root.appending(path: sessionID).appending(path: "audio")
+            let sources: [Track: any AudioSource] = [
+                .microphone: MicrophoneCapture(), .system: SystemAudioCapture(),
+            ]
+            let backend = await SpeechLiveTranscription.installed()
+
+            // Off unless asked for, until #92 is fixed: on a real recording the
+            // analyser did not finish when the audio ended, and a menu bar agent
+            // that never lets a session close is worse than one without a live
+            // transcript. Everything else this path is made of is exercised by
+            // the suite either way, and turning it on is one variable.
+            //
+            // No model for this language is the other way it is off, and a
+            // capture with no sink is byte-identical to the one before any of
+            // this existed: the live path is additive and switched off by
+            // absence.
+            guard
+                ProcessInfo.processInfo.environment["LISTTEN_LIVE"] == "1",
+                backend.capabilities.languages.contains(language)
+            else {
+                return ArmedRecording(
+                    capture: SegmentedCapture(
+                        sources: sources,
+                        directory: audio,
+                        rotateEvery: rotateEvery
+                    )
+                )
+            }
+
+            let sink = StreamingLiveAudioSink()
+            return ArmedRecording(
+                capture: SegmentedCapture(
+                    sources: sources,
+                    directory: audio,
+                    rotateEvery: rotateEvery,
+                    live: sink
+                ),
+                live: LiveTranscript(
+                    audio: sink.stream,
+                    sink: sink,
+                    backend: backend,
+                    writer: SessionLiveTranscripts(root: root),
+                    sessionID: sessionID,
+                    language: language
+                )
+            )
+        }
     }
 
     /// Everything after the audio: transcribe each segment, correct, write the

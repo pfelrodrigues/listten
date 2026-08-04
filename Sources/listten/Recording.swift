@@ -36,11 +36,16 @@ enum Recording {
         }
 
         let step = PerformStep(progress: SessionProgressLogs(root: root))
-        let capture = SegmentedCapture(
-            sources: [.microphone: MicrophoneCapture(), .system: SystemAudioCapture()],
-            directory: directory.appending(path: "audio"),
-            rotateEvery: rotateEvery
-        )
+        // Armed exactly the way the agent arms it, live transcript and all. A
+        // capture built here on its own would mean `kill9` and this command
+        // check something the product does not run.
+        let armed: ArmedRecording
+        do {
+            armed = try await Composition.arming(root: root, rotateEvery: rotateEvery)(session.id)
+        } catch {
+            fail("could not arm a capture: \(error)")
+        }
+        let capture = armed.capture
 
         let stream: AsyncStream<Segment>
         do {
@@ -48,6 +53,7 @@ enum Recording {
         } catch {
             fail("could not start capture: \(error)")
         }
+        let live = armed.live.map { transcript in Task { await transcript.run() } }
 
         print("recording \(seconds)s, rotating every \(Int(rotateEvery))s")
         let stopper = Task {
@@ -71,6 +77,18 @@ enum Recording {
             }
         } catch {
             fail("capture reported: \(error)")
+        }
+
+        // After the capture, which is what ends the sink the live side reads.
+        await live?.value
+        if let transcript = armed.live {
+            let outcome = await transcript.outcome()
+            print(
+                "live \(outcome.lines) line(s)"
+                    + (outcome.dropped > 0 ? ", \(outcome.dropped) dropped" : "")
+                    + (outcome.endedEarly ? ", ended early" : "")
+                    + (outcome.failure.map { ", \($0)" } ?? "")
+            )
         }
 
         do {
