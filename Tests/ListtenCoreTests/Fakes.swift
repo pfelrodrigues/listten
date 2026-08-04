@@ -368,3 +368,25 @@ actor InMemoryTranscripts: TranscriptStoring {
         return stored[sessionID]
     }
 }
+
+/// Parks work where it waits, so a test can act while it is waiting rather than
+/// race it.
+actor Gate {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var opened = false
+
+    nonisolated var sleeping: @Sendable (Duration) async throws -> Void {
+        { _ in await self.wait() }
+    }
+
+    func open() {
+        opened = true
+        waiting?.resume()
+        waiting = nil
+    }
+
+    func wait() async {
+        guard !opened else { return }
+        await withCheckedContinuation { waiting = $0 }
+    }
+}

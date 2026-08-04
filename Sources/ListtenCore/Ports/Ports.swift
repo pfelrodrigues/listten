@@ -148,6 +148,15 @@ public struct NoteNotDelivered: Error {
     }
 }
 
+/// Spelled out because this is the failure a user reads rather than the one a
+/// log holds: reflected as a struct it names the meeting lost, when the note is
+/// on disk and only the copy did not happen.
+extension NoteNotDelivered: CustomStringConvertible {
+    public var description: String {
+        "The note is written at \(kept.path) but could not be copied out: \(underlying)"
+    }
+}
+
 /// Writes the finished note where the user will read it.
 ///
 /// The note is written inside the session directory first and copied to the

@@ -276,7 +276,7 @@ enum Entry {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let bar = MenuBar(root: Self.defaultRoot)
+        let bar = MenuBar(root: Self.defaultRoot, notes: Self.defaultNotes)
         bar.install()
 
         app.run()
@@ -289,6 +289,20 @@ enum Entry {
         URL.applicationSupportDirectory
             .appending(path: "listten")
             .appending(path: "sessions")
+    }
+
+    /// A sibling of the sessions root rather than somewhere under ~/Documents,
+    /// which is where a person would sooner look: reading that folder needs a
+    /// Files and Folders grant, and a denied one would strand every note beside
+    /// its audio with the app reporting a failure the user cannot undo. A folder
+    /// the user picks is worth having and is not this issue.
+    ///
+    /// Not derived from the sessions root, so `listten record 60 /tmp/x` cannot
+    /// silently move where notes are filed.
+    static var defaultNotes: URL {
+        URL.applicationSupportDirectory
+            .appending(path: "listten")
+            .appending(path: "notes")
     }
 
     private static func printUsage() {

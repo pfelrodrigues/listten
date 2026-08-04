@@ -22,9 +22,9 @@ final class MenuBar: NSObject {
     /// still draws and no longer answers a click.
     private static var installed: MenuBar?
 
-    init(root: URL) {
+    init(root: URL, notes: URL) {
         sessionsRoot = root
-        recorder = Composition.recorder(root: root)
+        recorder = Composition.recorder(root: root, notes: notes)
         super.init()
     }
 
@@ -68,8 +68,11 @@ final class MenuBar: NSObject {
         menu.addItem(Self.disabled(Self.explanation(for: state)))
         menu.addItem(.separator())
 
+        // Recording is offered while the last session is still being written up:
+        // transcription can be run again from the audio and the meeting starting
+        // now cannot.
         switch state {
-        case .idle, .finished, .failed:
+        case .idle, .finished, .failed, .processing, .processed, .processingFailed:
             menu.addItem(action("Start recording", #selector(startRecording)))
         case .recording:
             menu.addItem(action("Stop recording", #selector(stopRecording)))
@@ -77,7 +80,15 @@ final class MenuBar: NSObject {
             menu.addItem(Self.disabled("Finishing…"))
         }
 
-        if case .finished = state {
+        switch state {
+        case .processed:
+            menu.addItem(action("Open the note", #selector(openNote)))
+        case .processingFailed:
+            menu.addItem(action("Write the note again", #selector(processAgain)))
+        default:
+            break
+        }
+        if Self.session(of: state) != nil {
             menu.addItem(action("Open this session", #selector(openSession)))
         }
         menu.addItem(action("Open sessions folder", #selector(openSessionsFolder)))
@@ -98,8 +109,24 @@ final class MenuBar: NSObject {
         case .idle: return "waveform"
         case .recording: return "waveform.circle.fill"
         case .finishing: return "hourglass"
+        case .processing: return "ellipsis.circle"
+        case .processed: return "doc.text"
         case .finished: return "checkmark.circle"
-        case .failed: return "exclamationmark.triangle"
+        case .failed, .processingFailed: return "exclamationmark.triangle"
+        }
+    }
+
+    /// The session a state is about, where it is about one. Both "open this
+    /// session" and the retry need it, and a state that has none is exactly a
+    /// state neither belongs on.
+    private static func session(of state: SessionRecorder.State) -> String? {
+        switch state {
+        case .processing(let id), .processed(let id, _), .processingFailed(let id, _):
+            return id
+        case .finished(let id, _, _):
+            return id
+        case .idle, .recording, .finishing, .failed:
+            return nil
         }
     }
 
@@ -111,9 +138,13 @@ final class MenuBar: NSObject {
             return "Recording — \(clock(seconds)) in \(segments) segment(s)"
         case .finishing:
             return "Finishing the last segment"
+        case .processing:
+            return "Writing up the last recording"
+        case .processed(_, let note):
+            return "Note ready: \(note.lastPathComponent)"
         case .finished(_, let outcome, let seconds):
             return "Last session \(outcome.rawValue), \(clock(seconds))"
-        case .failed(let reason):
+        case .failed(let reason), .processingFailed(_, let reason):
             return reason
         }
     }
@@ -150,8 +181,23 @@ final class MenuBar: NSObject {
     }
 
     @objc private func openSession() {
-        guard case .finished(let id, _, _) = shown else { return }
+        guard let shown, let id = Self.session(of: shown) else { return }
         NSWorkspace.shared.open(sessionsRoot.appending(path: id))
+    }
+
+    @objc private func openNote() {
+        guard case .processed(_, let note) = shown else { return }
+        NSWorkspace.shared.open(note)
+    }
+
+    /// The pipeline reruns a session from its audio, so the retry is this and
+    /// nothing else.
+    @objc private func processAgain() {
+        guard case .processingFailed(let id, _) = shown else { return }
+        Task { @MainActor in
+            await recorder.process(id: id)
+            await refresh()
+        }
     }
 
     @objc private func openSessionsFolder() {

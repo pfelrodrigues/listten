@@ -16,11 +16,24 @@ public actor SessionRecorder {
         case idle
         case recording(segments: Int, seconds: TimeInterval)
         case finishing
+        /// A recording that reached disk and is being walked to a note.
+        case processing(id: String)
+        /// The note, where the reader will find it.
+        case processed(id: String, note: URL)
+        /// Stopped without a note to make: a recording too short to be a meeting.
         case finished(id: String, outcome: SessionState, seconds: TimeInterval)
         case failed(String)
+        /// Kept apart from `failed` because it carries the session, which is
+        /// what makes running it again a menu item rather than a mechanism.
+        case processingFailed(id: String, reason: String)
     }
 
     public typealias CaptureFactory = @Sendable (String) async throws -> any AudioCapturing
+
+    /// Everything after the audio, keyed by session. A closure for the same
+    /// reason as `CaptureFactory`: the recorder drives the pipeline without
+    /// knowing what transcribes or where a note is written.
+    public typealias ProcessingFactory = @Sendable (String) async throws -> NoteLocation
 
     private let sessions: any SessionStoring
     private let progress: any ProgressLogging
@@ -28,6 +41,7 @@ public actor SessionRecorder {
     private let clock: any TimeSource
     private let minimumDuration: TimeInterval
     private let makeCapture: CaptureFactory
+    private let makeNote: ProcessingFactory
 
     private var state = State.idle
     private var capture: (any AudioCapturing)?
@@ -40,7 +54,8 @@ public actor SessionRecorder {
         prompt: any RecordingPrompting,
         clock: any TimeSource,
         minimumDuration: TimeInterval,
-        capture: @escaping CaptureFactory
+        capture: @escaping CaptureFactory,
+        process: @escaping ProcessingFactory
     ) {
         self.sessions = sessions
         self.progress = progress
@@ -48,12 +63,15 @@ public actor SessionRecorder {
         self.clock = clock
         self.minimumDuration = minimumDuration
         self.makeCapture = capture
+        self.makeNote = process
     }
 
     public func current() -> State { state }
 
     /// Ignored while one is already running, so a second click cannot leave a
-    /// recording nobody holds a handle to.
+    /// recording nobody holds a handle to. Processing the last session is not a
+    /// recording and does not hold this back: everything after the audio can be
+    /// run again, and the audio cannot.
     public func start() async {
         switch state {
         case .recording, .finishing: return
@@ -104,13 +122,61 @@ public actor SessionRecorder {
                 sessions: sessions,
                 minimumDuration: minimumDuration
             )(sessionID: sessionID)
-            state = .finished(id: sessionID, outcome: stopped.state, seconds: stopped.duration)
+            if stopped.state == .recorded {
+                writeUp(sessionID)
+            } else {
+                // Discarded, so there is no meeting to write up. Processing it
+                // would be refused by the pipeline and reported as a failure the
+                // user did nothing wrong to cause.
+                state = .finished(id: sessionID, outcome: stopped.state, seconds: stopped.duration)
+            }
         } catch {
             state = .failed(String(describing: error))
         }
         self.capture = nil
         self.sessionID = nil
         pump = nil
+    }
+
+    /// Walks a session already on disk to its note.
+    ///
+    /// Spawned rather than awaited, so stopping hands the menu back at once: an
+    /// hour of meeting is about forty seconds of transcription, and a caller
+    /// polling for the state has to be able to say that it is running.
+    ///
+    /// Public because the pipeline is safe to run again on the same session, so
+    /// a failed run is retried from the menu rather than through a mechanism of
+    /// its own.
+    public func process(id: String) {
+        // Never over a running recording: `stop()` only answers from
+        // `.recording`, so moving off it here would leave a capture nobody can
+        // end and the meeting in the room unfinishable. Stopping reaches the
+        // same work through `writeUp`, from `.finishing`, which is its own.
+        switch state {
+        case .recording, .finishing: return
+        default: break
+        }
+
+        writeUp(id)
+    }
+
+    private func writeUp(_ id: String) {
+        state = .processing(id: id)
+        Task { [weak self] in await self?.settle(id) }
+    }
+
+    private func settle(_ id: String) async {
+        let reached: State
+        do {
+            reached = .processed(id: id, note: try await makeNote(id).delivered)
+        } catch {
+            reached = .processingFailed(id: id, reason: String(describing: error))
+        }
+
+        // A recording started while this ran owns the state now: what is
+        // happening beats what has finished, and the note is still on disk.
+        guard case .processing(let running) = state, running == id else { return }
+        state = reached
     }
 
     /// Wrapped in PerformStep, so an intent lands before the state is saved and
