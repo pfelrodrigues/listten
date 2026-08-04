@@ -34,7 +34,9 @@ private func fakeCapture(
     length: TimeInterval,
     rotateEvery: TimeInterval
 ) -> SessionRecorder.CaptureFactory {
-    { _ in FakeAudioCapture(length: length, rotateEvery: rotateEvery) }
+    { _ in
+        ArmedRecording(capture: FakeAudioCapture(length: length, rotateEvery: rotateEvery))
+    }
 }
 
 /// How many times the note was asked for, since some of these are about it not
@@ -224,6 +226,100 @@ func aSegmentThatCannotBeKeptIsReported() async {
         return
     }
     #expect(reason.contains("could not be kept") || reason.contains("Refused"))
+}
+
+/// The live transcript is followed for as long as the recording runs and awaited
+/// after it stops, so the last few seconds of finals are written before anyone
+/// is told the meeting ended.
+@Test("a recording with a live transcript reports how that transcript went")
+func aRecordingReportsHowItsLiveTranscriptWent() async throws {
+    let writer = InMemoryLiveTranscripts()
+    // Still writing when the recording stops, which is the only thing that tells
+    // a recorder that waits for the live side from one that walks away from it.
+    await writer.takesItsTime(.milliseconds(50))
+    let sink = InMemoryLiveAudioSink(capacity: 4096)
+    let subject = recorder(
+        capture: { sessionID in
+            ArmedRecording(
+                capture: FakeAudioCapture(length: 10, rotateEvery: 5),
+                live: LiveTranscript(
+                    audio: AsyncStream { continuation in
+                        continuation.yield(
+                            LiveAudio(
+                                track: .microphone,
+                                audio: CapturedAudio(
+                                    hostTime: 1000,
+                                    sampleRate: 16000,
+                                    samples: Array(repeating: 0, count: 16000)
+                                ),
+                                start: 0
+                            )
+                        )
+                        continuation.finish()
+                    },
+                    sink: sink,
+                    backend: FakeLiveTranscriber(),
+                    writer: writer,
+                    sessionID: sessionID,
+                    language: "pt-BR",
+                    settleEvery: 1
+                )
+            )
+        }
+    )
+
+    await subject.start()
+    await subject.stop()
+
+    // Stopping now walks to a note on a task of its own, so the state is reached
+    // rather than returned.
+    guard case .processed(let id, _) = await settled(subject) else {
+        Issue.record("expected a written note, got \(await subject.current())")
+        return
+    }
+    #expect(await subject.liveOutcome()?.lines == 1)
+    #expect(await writer.lines(for: id).count == 1, "the trailing line was not awaited")
+}
+
+@Test("a recording with no live transcript reports none")
+func aRecordingWithNoLiveTranscriptReportsNone() async {
+    let subject = recorder(capture: fakeCapture(length: 10, rotateEvery: 5))
+
+    await subject.start()
+    await subject.stop()
+
+    #expect(await subject.liveOutcome() == nil)
+}
+
+/// A live task nobody awaits keeps an analyser open into the next meeting, and
+/// a capture that failed to stop is exactly when it would be forgotten.
+@Test("a capture that fails to stop still leaves the live transcript awaited")
+func aFailedStopStillAwaitsTheLiveTranscript() async {
+    let writer = InMemoryLiveTranscripts()
+    let subject = recorder(
+        capture: { sessionID in
+            ArmedRecording(
+                capture: CaptureThatFailsToStop(),
+                live: LiveTranscript(
+                    audio: AsyncStream { $0.finish() },
+                    sink: InMemoryLiveAudioSink(),
+                    backend: FakeLiveTranscriber(),
+                    writer: writer,
+                    sessionID: sessionID,
+                    language: "pt-BR"
+                )
+            )
+        }
+    )
+
+    await subject.start()
+    await subject.stop()
+
+    guard case .failed = await subject.current() else {
+        Issue.record("expected a failure, got \(await subject.current())")
+        return
+    }
+    #expect(await subject.liveOutcome() != nil, "the live transcript was abandoned")
 }
 
 /// What the menu bar reads while a meeting is happening. Every other test stops
@@ -511,7 +607,7 @@ func concurrentStartsArmOneRecording() async {
     let subject = recorder(capture: { id in
         _ = await armed.next()
         await Task.yield()
-        return FakeAudioCapture(length: 10, rotateEvery: 5)
+        return ArmedRecording(capture: FakeAudioCapture(length: 10, rotateEvery: 5))
     })
 
     async let first: Void = subject.start()
@@ -671,4 +767,62 @@ func lookingForUnwrittenNotesIsIgnoredWhileRecording() async {
         Issue.record("the recording was disturbed: \(await subject.current())")
         return
     }
+}
+
+/// Stopping suspends several times, and awaiting the live transcript adds one
+/// more. The terminal state has to wait for all of them.
+///
+/// An actor is reentrant: with the state moved first, a start landing in that
+/// window is accepted, arms a capture, and is then torn down by this method
+/// resuming — the state says recording, the capture is gone, and stopping
+/// answers with nothing. A meeting that runs forever.
+@Test("stopping stays finishing until the live transcript has been waited for")
+func stoppingStaysFinishingUntilTheLiveTranscriptIsDone() async {
+    let heldAudio = HeldAudio()
+    let sink = StreamingLiveAudioSink()
+    let subject = recorder(
+        capture: { sessionID in
+            ArmedRecording(
+                capture: FakeAudioCapture(length: 10, rotateEvery: 5),
+                live: LiveTranscript(
+                    // Never finishes on its own, so the stop can be caught
+                    // waiting on the live task.
+                    audio: heldAudio.stream,
+                    sink: sink,
+                    backend: FakeLiveTranscriber(),
+                    writer: InMemoryLiveTranscripts(),
+                    sessionID: sessionID,
+                    language: "pt-BR"
+                )
+            )
+        }
+    )
+
+    await subject.start()
+    async let stopping: Void = subject.stop()
+    // Long enough for the stop to reach the await it holds on.
+    for _ in 0..<200 { await Task.yield() }
+
+    // Anything else here is a state a start would be accepted from, and the
+    // recording it armed would be torn down by the stop resuming below.
+    #expect(
+        await subject.current() == .finishing,
+        "the stop moved off finishing before the live transcript was waited for"
+    )
+
+    heldAudio.finish()
+    await stopping
+}
+
+/// A live audio stream the test decides when to end, so a stop can be caught
+/// waiting on the live task it must not move the state before.
+private final class HeldAudio: @unchecked Sendable {
+    let stream: AsyncStream<LiveAudio>
+    private let continuation: AsyncStream<LiveAudio>.Continuation
+
+    init() {
+        (stream, continuation) = AsyncStream<LiveAudio>.makeStream()
+    }
+
+    func finish() { continuation.finish() }
 }

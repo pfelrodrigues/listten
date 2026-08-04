@@ -37,7 +37,9 @@ private func spoken(seconds: Double, at rate: Double = 16000) throws -> URL {
 /// without a binary in the repository and without a microphone. What goes in is
 /// what should come out, which is the only way to tell recognition working from
 /// recognition merely returning something.
-private func synthesised(_ sentence: String, language: String) async throws -> URL {
+///
+/// Shared with the live backend's tests, which need the same words said out loud.
+func synthesised(_ sentence: String, language: String) async throws -> URL {
     let directory = FileManager.default.temporaryDirectory.appending(path: "speech-\(UUID())")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appending(path: "mic-0001.caf")

@@ -60,10 +60,28 @@ final class MenuBar: NSObject {
     private func refresh() async {
         let state = await recorder.current()
         let pending = await recorder.unwrittenNotes()
-        guard state != shown || pending != unwritten else { return }
+        let live = await recorder.liveOutcome()
+        guard state != shown || pending != unwritten || live != lastLive else { return }
         shown = state
         unwritten = pending
+        lastLive = live
         rebuild(for: state)
+    }
+
+    /// How the last live transcript went. Shown because the file it writes is
+    /// the whole point of the feature and nothing else would say whether it
+    /// worked: a meeting with a hole in its transcript looks exactly like a
+    /// meeting nobody spoke in.
+    private var lastLive: LiveTranscript.Outcome?
+
+    private static func summary(of outcome: LiveTranscript.Outcome) -> String {
+        if let failure = outcome.failure {
+            return "Live transcript stopped: \(failure)"
+        }
+        var said = "Live transcript: \(outcome.lines) line(s)"
+        if outcome.dropped > 0 { said += ", \(outcome.dropped) buffer(s) lost" }
+        if outcome.endedEarly { said += ", ended early" }
+        return said
     }
 
     private func rebuild(for state: SessionRecorder.State) {
@@ -111,6 +129,9 @@ final class MenuBar: NSObject {
         }
         if Self.session(of: state) != nil {
             menu.addItem(action("Open this session", #selector(openSession)))
+        }
+        if let lastLive {
+            menu.addItem(Self.disabled(Self.summary(of: lastLive)))
         }
         menu.addItem(action("Open sessions folder", #selector(openSessionsFolder)))
         menu.addItem(.separator())

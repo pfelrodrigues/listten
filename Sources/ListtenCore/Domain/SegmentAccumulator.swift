@@ -14,6 +14,11 @@ public struct SegmentAccumulator: Sendable {
     /// Where a buffer belongs, and the segment its arrival completed.
     public struct Placement: Sendable, Equatable {
         public let index: Int
+        /// This buffer's first sample on the session clock, the timeline the
+        /// segments are placed on. Anything else following the same audio reads
+        /// it from here rather than deriving a second anchor that would have to
+        /// be proven equal to this one.
+        public let start: TimeInterval
         public let closed: Segment?
     }
 
@@ -48,9 +53,9 @@ public struct SegmentAccumulator: Sendable {
         accumulated += measured.duration
 
         guard accumulated >= rotateEvery else {
-            return Placement(index: belongsTo, closed: nil)
+            return Placement(index: belongsTo, start: measured.start, closed: nil)
         }
-        return Placement(index: belongsTo, closed: try rotate())
+        return Placement(index: belongsTo, start: measured.start, closed: try rotate())
     }
 
     /// Hands over the file still open, so stopping does not cost its audio.

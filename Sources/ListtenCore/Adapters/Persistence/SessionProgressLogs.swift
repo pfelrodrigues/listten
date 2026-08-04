@@ -23,7 +23,7 @@ public struct SessionProgressLogs: ProgressLogging {
     }
 
     public func checkpoints(for sessionID: String) throws -> [Checkpoint] {
-        try log(for: sessionID).checkpoints()
+        try log(for: sessionID).entries()
     }
 
     private func log(for sessionID: String) -> JSONLProgressLog {

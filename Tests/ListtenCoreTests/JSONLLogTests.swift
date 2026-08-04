@@ -39,7 +39,7 @@ func checkpointsComeBackInOrder() throws {
         try log.append(closed)
         try log.append(transcribed)
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read == [closed, transcribed])
     }
 }
@@ -47,7 +47,7 @@ func checkpointsComeBackInOrder() throws {
 @Test("a log nobody wrote to holds no checkpoints")
 func missingFileHoldsNoCheckpoints() throws {
     try withTemporaryLog { log, _ in
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read.isEmpty)
     }
 }
@@ -57,7 +57,7 @@ func emptyFileHoldsNoCheckpoints() throws {
     try withTemporaryLog { log, url in
         try appendRaw("", to: url)
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read.isEmpty)
     }
 }
@@ -70,7 +70,7 @@ func tornLastLineIsDropped() throws {
         let torn = try encoded(.completion(.transcribingChunk(index: 1))).dropLast(6)
         try appendRaw(String(torn), to: url)
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read == [closed, transcribed])
     }
 }
@@ -88,7 +88,7 @@ func appendAfterATornLineKeepsEarlierCheckpoints() throws {
 
         try log.append(.completion(.transcribingChunk(index: 2)))
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read == [closed, transcribed, .completion(.transcribingChunk(index: 2))])
     }
 }
@@ -100,7 +100,7 @@ func appendAfterATornFirstLineStartsTheLogOver() throws {
 
         try log.append(transcribed)
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read == [transcribed])
     }
 }
@@ -113,7 +113,7 @@ func corruptLineIsReported() throws {
         try log.append(transcribed)
 
         #expect(throws: JSONLProgressLog.Failure.corruptLine(number: 2)) {
-            try log.checkpoints()
+            try log.entries()
         }
     }
 }
@@ -133,7 +133,7 @@ func outOfOrderEntriesAreKeptAsWritten() throws {
             try log.append(checkpoint)
         }
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read == arrived)
     }
 }
@@ -171,7 +171,7 @@ func racingWritersEachLandAWholeLine() throws {
             }
         }
 
-        let read = try log.checkpoints()
+        let read = try log.entries()
         #expect(read.count == writers * each)
         #expect(indices(of: read).sorted() == Array(0..<writers * each))
     }
@@ -193,7 +193,7 @@ func unreadableLogRefusesTheAppend() throws {
         }
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        #expect(try log.checkpoints() == [closed])
+        #expect(try log.entries() == [closed])
     }
 }
 
@@ -211,7 +211,7 @@ func tornTailOnAnUnreadableLogIsNeverFusedOver() throws {
         #expect(throws: JSONLProgressLog.Failure.self) { try log.append(transcribed) }
 
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        #expect(try log.checkpoints() == [closed])
+        #expect(try log.entries() == [closed])
     }
 }
 

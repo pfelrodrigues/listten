@@ -1,5 +1,24 @@
 import Foundation
 
+/// What a factory hands back: the capture, and the live transcript following it
+/// where there is one.
+///
+/// They arrive together because they are made together — the live transcript
+/// reads the sink the capture was built with — and because something has to
+/// await the live side after the capture has stopped, or the last few seconds of
+/// finals are lost. Nil means no live transcript, which is what a machine with
+/// no model for the language gets, and the capture is then exactly what it was
+/// before this existed.
+public struct ArmedRecording: Sendable {
+    public let capture: any AudioCapturing
+    public let live: LiveTranscript?
+
+    public init(capture: any AudioCapturing, live: LiveTranscript? = nil) {
+        self.capture = capture
+        self.live = live
+    }
+}
+
 /// A recording somebody else decides the length of.
 ///
 /// Recording for a number of seconds is what a command line does because it has
@@ -28,7 +47,7 @@ public actor SessionRecorder {
         case processingFailed(id: String, reason: String)
     }
 
-    public typealias CaptureFactory = @Sendable (String) async throws -> any AudioCapturing
+    public typealias CaptureFactory = @Sendable (String) async throws -> ArmedRecording
 
     /// Everything after the audio, keyed by session. A closure for the same
     /// reason as `CaptureFactory`: the recorder drives the pipeline without
@@ -45,14 +64,16 @@ public actor SessionRecorder {
 
     private var state = State.idle
     private var arming = false
-    /// A segment that never reached the state file. Recovery has to adopt it
-    /// before anything transcribes, so stopping reports rather than processes.
-    private var lostASegment = false
+    /// Why a segment never reached the state file, where stopping will find it.
+    private var segmentFailure: String?
     private var writing: Task<Void, Never>?
     private var unwritten: [String: String] = [:]
     private var capture: (any AudioCapturing)?
     private var pump: Task<Void, Never>?
     private var sessionID: String?
+    private var live: LiveTranscript?
+    private var liveTask: Task<Void, Never>?
+    private var lastLiveOutcome: LiveTranscript.Outcome?
 
     public init(
         sessions: any SessionStoring,
@@ -74,6 +95,12 @@ public actor SessionRecorder {
 
     public func current() -> State { state }
 
+    /// How the live transcript of the last recording went, or nil where there
+    /// was none. Deliberately not part of `State`: a meeting recorded perfectly
+    /// must not read as failed because the transcript for following along
+    /// stopped growing.
+    public func liveOutcome() -> LiveTranscript.Outcome? { lastLiveOutcome }
+
     /// Ignored while one is already running, so a second click cannot leave a
     /// recording nobody holds a handle to. Processing the last session is not a
     /// recording and does not hold this back: everything after the audio can be
@@ -94,13 +121,20 @@ public actor SessionRecorder {
         do {
             let armed = try await ArmSession(sessions: sessions, prompt: prompt, clock: clock)()
             let confirmed = try await ConfirmRecording(sessions: sessions)(sessionID: armed.id)
-            let capture = try await makeCapture(armed.id)
-            let stream = try await capture.start()
+            let recording = try await makeCapture(armed.id)
+            let stream = try await recording.capture.start()
 
-            self.capture = capture
+            capture = recording.capture
+            live = recording.live
             sessionID = armed.id
-            lostASegment = false
+            segmentFailure = nil
+            lastLiveOutcome = nil
             state = .recording(segments: 0, seconds: 0)
+
+            // Spawned only once the capture is running. A start that threw
+            // leaves a stream nobody will ever finish, and a task awaiting one
+            // never returns.
+            liveTask = recording.live.map { transcript in Task { await transcript.run() } }
 
             pump = Task { [weak self] in
                 var session = confirmed
@@ -113,6 +147,7 @@ public actor SessionRecorder {
             // the one thing a caller has to be able to say out loud.
             state = .failed(String(describing: error))
             capture = nil
+            live = nil
         }
     }
 
@@ -120,6 +155,13 @@ public actor SessionRecorder {
         guard case .recording = state, let capture, let sessionID else { return }
         state = .finishing
 
+        // Everything below runs while the state still says finishing, and the
+        // terminal state is set once at the end. An actor is reentrant: with the
+        // state moved first, a start landing on one of the awaits below would be
+        // accepted, arm a capture, and then be torn down by this method
+        // resuming — a recording that can never be stopped, and a device nobody
+        // holds a handle to.
+        var reached: State?
         do {
             // The partials come back from stop and the pump has to have drained
             // first: it is what writes the closed segments in.
@@ -136,24 +178,45 @@ public actor SessionRecorder {
                 sessions: sessions,
                 minimumDuration: minimumDuration
             )(sessionID: sessionID)
-            if lostASegment {
-                // Whatever `keeping` said is the diagnosis. Reporting the stop
-                // as finished over it would hide the segment that was lost
-                // behind a recording that looks complete.
-            } else if stopped.state == .recorded {
-                writeUp(sessionID)
-            } else {
+            if stopped.state != .recorded {
                 // Discarded, so there is no meeting to write up. Processing it
                 // would be refused by the pipeline and reported as a failure the
                 // user did nothing wrong to cause.
-                state = .finished(id: sessionID, outcome: stopped.state, seconds: stopped.duration)
+                reached = .finished(
+                    id: sessionID,
+                    outcome: stopped.state,
+                    seconds: stopped.duration
+                )
             }
         } catch {
-            state = .failed(String(describing: error))
+            reached = .failed(String(describing: error))
         }
+
+        // After the capture, which is what ends the sink the live side reads,
+        // and outside the catch so a stop that failed still gets here: a live
+        // task nobody awaits holds an analyser open into the next meeting.
+        await liveTask?.value
+        if let live {
+            lastLiveOutcome = await live.outcome()
+        }
+
         self.capture = nil
+        self.live = nil
+        liveTask = nil
         self.sessionID = nil
         pump = nil
+
+        // A segment that never reached the state file leaves audio the session
+        // does not name, which recovery adopts and the pipeline refuses. Writing
+        // up anyway would replace this diagnosis with whatever the pipeline made
+        // of it, and offer a retry that cannot work until recovery has run.
+        if let lost = segmentFailure {
+            state = .failed(lost)
+        } else if let reached {
+            state = reached
+        } else {
+            writeUp(sessionID)
+        }
     }
 
     /// Walks a session already on disk to its note.
@@ -276,12 +339,10 @@ public actor SessionRecorder {
             }
             return grown
         } catch {
-            state = .failed("a segment could not be kept: \(error)")
-            // The write-up would overwrite this with .processing and the real
-            // diagnosis would be gone, replaced by whatever the pipeline made of
-            // a session whose state file is behind its audio. Recovery adopts
-            // the orphan first; this is not the place.
-            lostASegment = true
+            // Recorded rather than set: moving off .recording here would let a
+            // start in, and the recording still running would have nothing to
+            // stop it. Stopping reads this and reports it.
+            segmentFailure = segmentFailure ?? "a segment could not be kept: \(error)"
             return session
         }
     }
