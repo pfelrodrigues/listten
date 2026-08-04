@@ -41,6 +41,8 @@ let fakeAudio: [Track: URL] = [
 /// coming, and what happens to a request this backend cannot serve.
 func verifyTranscribingContract(
     _ make: @Sendable () -> any Transcribing,
+    audio: [Track: URL] = fakeAudio,
+    language: String? = nil,
     sourceLocation: SourceLocation = #_sourceLocation
 ) async throws {
     let capabilities = make().capabilities
@@ -50,7 +52,9 @@ func verifyTranscribingContract(
         "a backend that names no language transcribes nothing",
         sourceLocation: sourceLocation
     )
-    guard let language = capabilities.languages.sorted().first else { return }
+    // Named by the caller where a backend reads real files, since the audio it
+    // is handed has to be in the language it is told it is in.
+    guard let language = language ?? capabilities.languages.sorted().first else { return }
 
     await #expect(
         throws: TranscriptionFailure.noAudio,
@@ -74,13 +78,13 @@ func verifyTranscribingContract(
         _ = try await make()
             .transcribe(
                 TranscriptionRequest(
-                    audio: [.microphone: fakeAudio[.microphone]!],
+                    audio: [.microphone: audio[.microphone]!],
                     language: unknown
                 )
             )
     }
 
-    let both = TranscriptionRequest(audio: fakeAudio, language: language)
+    let both = TranscriptionRequest(audio: audio, language: language)
     if capabilities.multitrack {
         let run = try await transcribed(await make().transcribe(both))
         #expect(
@@ -99,7 +103,7 @@ func verifyTranscribingContract(
     }
 
     let one = TranscriptionRequest(
-        audio: [.microphone: fakeAudio[.microphone]!],
+        audio: [.microphone: audio[.microphone]!],
         language: language
     )
     let run = try await transcribed(await make().transcribe(one))
