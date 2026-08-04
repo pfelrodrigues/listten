@@ -293,6 +293,20 @@ struct FixedTimeSource: TimeSource {
     var now = Date(timeIntervalSince1970: 0)
 }
 
+/// A fake the contract can write into, which `FakeRecordedAudio` cannot: it is
+/// built from what it will answer with and never told anything afterwards.
+actor FakeRecordedAudioStore: RecordedAudio {
+    private var stored: [String: [SegmentFile]] = [:]
+
+    func put(_ files: [SegmentFile], for sessionID: String) {
+        stored[sessionID] = files
+    }
+
+    func segments(for sessionID: String) async throws -> [SegmentFile] {
+        stored[sessionID] ?? []
+    }
+}
+
 actor FakeRecordedAudio: RecordedAudio {
     private let stored: [String: [SegmentFile]]
 
@@ -367,4 +381,82 @@ actor InMemoryTranscripts: TranscriptStoring {
         guard !corrupted.contains(sessionID) else { throw Unreadable(id: sessionID) }
         return stored[sessionID]
     }
+}
+
+/// Parks work where it waits, so a test can act while it is waiting rather than
+/// race it.
+actor Gate {
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var opened = false
+
+    nonisolated var sleeping: @Sendable (Duration) async throws -> Void {
+        { _ in await self.wait() }
+    }
+
+    func open() {
+        opened = true
+        waiting?.resume()
+        waiting = nil
+    }
+
+    func wait() async {
+        guard !opened else { return }
+        await withCheckedContinuation { waiting = $0 }
+    }
+}
+
+/// Answers from a table keyed by file name, so a test says what a recording is
+/// in rather than depending on a model to work it out.
+struct FakeLanguageDetection: LanguageDetecting {
+    let candidates: [String]
+    private let heard: [String: String]
+
+    init(candidates: [String], heard: [String: String]) {
+        self.candidates = candidates
+        self.heard = heard
+    }
+
+    func language(of sample: SegmentFile) async throws -> String? {
+        heard[sample.url.lastPathComponent]
+    }
+}
+
+/// Refuses one save and takes every other, which is what a segment lost to a
+/// momentary failure looks like: the recording carries on and stopping works.
+actor StoreThatRefusesOneSave: SessionStoring {
+    struct Refused: Error, Equatable {}
+
+    private var stored: [String: Session] = [:]
+    private var saves = 0
+    private let refusing: Int
+
+    init(refusing: Int) {
+        self.refusing = refusing
+    }
+
+    func save(_ session: Session) async throws {
+        saves += 1
+        guard saves != refusing else { throw Refused() }
+        stored[session.id] = session
+    }
+
+    func load(id: String) async throws -> Session? { stored[id] }
+
+    func unfinished() async throws -> UnfinishedSessions {
+        UnfinishedSessions(sessions: stored.values.filter { !$0.state.isTerminal })
+    }
+}
+
+/// A store that cannot be listed, which is a sessions directory that will not
+/// read: the meetings are there and nothing can find out what they are.
+actor StoreThatCannotBeListed: SessionStoring {
+    struct Unlistable: Error, Equatable {}
+
+    private var stored: [String: Session] = [:]
+
+    func save(_ session: Session) async throws { stored[session.id] = session }
+
+    func load(id: String) async throws -> Session? { stored[id] }
+
+    func unfinished() async throws -> UnfinishedSessions { throw Unlistable() }
 }

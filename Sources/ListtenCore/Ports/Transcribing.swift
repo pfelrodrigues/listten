@@ -99,3 +99,26 @@ public protocol Transcribing: Sendable {
         _ request: TranscriptionRequest
     ) async throws -> AsyncThrowingStream<TranscriptionEvent, any Error>
 }
+
+/// Works out which language a recording is in.
+///
+/// Kept apart from `Transcribing` because it answers a different question with a
+/// different signal. Transcription hands back words; this needs to know how sure
+/// the engine was of them, which is what tells a language apart from one that
+/// merely sounds like it. Measured on a real recording: the same thirty seconds
+/// of Portuguese produced thirty words under both pt-BR and en-US, so counting
+/// words picked the wrong one, while the confidence was 0.93 against 0.29.
+///
+/// Held to these by `verifyLanguageDetectingContract`:
+///
+/// - `candidates` names at least one language, and every answer is one of them.
+/// - A sample nothing was heard in answers nil rather than a language picked at
+///   random. Most meetings open with a minute of nobody talking, and deciding
+///   the whole recording on that would decide it on silence.
+/// - The same sample answers the same way twice. A detector that varied would
+///   transcribe half a meeting in one language and half in another.
+public protocol LanguageDetecting: Sendable {
+    var candidates: [String] { get }
+
+    func language(of sample: SegmentFile) async throws -> String?
+}

@@ -35,6 +35,17 @@ enum Entry {
                 seconds: rest.first.flatMap(Double.init) ?? 5,
                 writingTo: rest.dropFirst().first.map { URL(filePath: $0) }
             )
+        case "process":
+            let rest = Array(args.dropFirst())
+            guard let id = rest.first else {
+                FileHandle.standardError.write(Data("process needs a session id\n".utf8))
+                exit(64)
+            }
+            await Recording.process(
+                id: id,
+                root: rest.dropFirst().first.map { URL(filePath: $0) } ?? Self.defaultRoot,
+                notes: rest.dropFirst(2).first.map { URL(filePath: $0) } ?? Self.defaultNotes
+            )
         case "tap":
             let rest = Array(args.dropFirst())
             captureFromSystem(seconds: rest.first.flatMap(Double.init) ?? 5)
@@ -276,7 +287,7 @@ enum Entry {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
 
-        let bar = MenuBar(root: Self.defaultRoot)
+        let bar = MenuBar(root: Self.defaultRoot, notes: Self.defaultNotes)
         bar.install()
 
         app.run()
@@ -291,6 +302,20 @@ enum Entry {
             .appending(path: "sessions")
     }
 
+    /// A sibling of the sessions root rather than somewhere under ~/Documents,
+    /// which is where a person would sooner look: reading that folder needs a
+    /// Files and Folders grant, and a denied one would strand every note beside
+    /// its audio with the app reporting a failure the user cannot undo. A folder
+    /// the user picks is worth having and is not this issue.
+    ///
+    /// Not derived from the sessions root, so `listten record 60 /tmp/x` cannot
+    /// silently move where notes are filed.
+    static var defaultNotes: URL {
+        URL.applicationSupportDirectory
+            .appending(path: "listten")
+            .appending(path: "notes")
+    }
+
     private static func printUsage() {
         print(
             """
@@ -303,6 +328,9 @@ enum Entry {
                                          and audio, under the sessions root
               listten resume [root]      resolve whatever a previous run left
                                          open, the way a launch would
+              listten process <id> [root] [notes]
+                                         transcribe a recorded session and write
+                                         its note, the same walk the agent makes
               listten capture [seconds] [directory]
                                          raw microphone check, no session
               listten tap [seconds]      raw system audio check, no session

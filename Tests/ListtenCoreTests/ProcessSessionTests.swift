@@ -70,7 +70,8 @@ private func wire(
             transcriber: transcriber,
             notes: notes,
             glossary: glossary,
-            language: language
+            language: .fixed(language),
+            detector: FakeLanguageDetection(candidates: [language], heard: [:])
         ),
         store: store,
         progress: progress,
@@ -327,4 +328,28 @@ func aCompletedSessionIsRefused() async throws {
         _ = try await wired.process(sessionID: session.id)
     }
     #expect(await wired.notes.contents(of: keptNote(session.id)) == nil)
+}
+
+/// Measured on a real recording: a Mac reporting en-BR has no model for it, the
+/// language falls back to en-US, and a meeting held in Portuguese transcribes to
+/// nothing at all. The pipeline reported success and wrote a note holding a
+/// title and no meeting.
+@Test("audio that produced no words is refused rather than written up as a note")
+func aTranscriptWithNoLinesIsRefused() async throws {
+    let session = try recordedSession(segments: [try segment(.microphone, 0, start: 0, 45)])
+    let wired = try await wire(
+        session: session,
+        files: [file(.microphone, 0, 45)],
+        transcriber: FakeTranscriber(hears: false)
+    )
+
+    await #expect(
+        throws: ProcessSession.NothingTranscribed(id: session.id, language: language)
+    ) {
+        _ = try await wired.process(sessionID: session.id)
+    }
+    #expect(
+        await wired.notes.contents(of: keptNote(session.id)) == nil,
+        "a note was written from a transcript with nothing in it"
+    )
 }
