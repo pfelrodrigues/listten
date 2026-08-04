@@ -50,6 +50,7 @@ public actor SystemAudioCapture: AudioSource {
     private var ring: CaptureRing?
     private var drain: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
+    private var outputChanged = false
     private var consecutiveRestarts = 0
     private var totalRestarts = 0
     private var droppedWhileRunning = 0
@@ -111,6 +112,14 @@ public actor SystemAudioCapture: AudioSource {
     /// aggregate reading a device nobody is playing through any more. Nothing is
     /// reported when that happens: the buffers simply stop, which is why the
     /// change is listened for rather than waited out.
+    ///
+    /// It raises a flag rather than rebuilding, because rebuilding suspends for
+    /// as long as the tap takes to come up and the watchdog can want the same
+    /// thing at the same moment. Two rebuilds in flight each finish holding a
+    /// started tap, and only one of them can be kept: the other is a live tap,
+    /// aggregate device and I/O procedure nobody holds, running for the rest of
+    /// the process with the recording indicator lit. One rebuilder, and the
+    /// question of who asked for it stops mattering.
     private func observeDefaultOutputChanges() {
         outputObserver = NotificationCenter.default.addObserver(
             forName: Self.defaultOutputChanged,
@@ -118,9 +127,13 @@ public actor SystemAudioCapture: AudioSource {
             queue: nil
         ) { [weak self] _ in
             guard let self else { return }
-            Task { await self.restartCapture(countingIt: false) }
+            Task { await self.outputDeviceChanged() }
         }
         DefaultOutputWatcher.shared.add()
+    }
+
+    private func outputDeviceChanged() {
+        outputChanged = true
     }
 
     /// Watches for the failure the whole design exists to avoid: a session that
@@ -150,6 +163,18 @@ public actor SystemAudioCapture: AudioSource {
                 consecutiveRestarts = 0
             }
 
+            // A device swapped underneath, or one that changed rate without
+            // changing identity. Neither stops the buffers, so neither reaches
+            // the stall check below: audio keeps arriving, stamped at a rate the
+            // device is no longer running at, and a track written that way plays
+            // at the wrong speed and slides away from the microphone.
+            if outputChanged || rateMoved() {
+                outputChanged = false
+                await restartCapture(countingIt: false)
+                detector.received(at: Self.now())
+                continue
+            }
+
             guard detector.verdict(at: Self.now()) == .stalled else { continue }
 
             // Restarting forever would hide a tap that is never coming back.
@@ -165,6 +190,10 @@ public actor SystemAudioCapture: AudioSource {
     /// Rebuilding the tap and the aggregate leaves the ring and its timestamps
     /// alone, so the silence shows up as a gap on the timeline instead of
     /// shifting everything that follows.
+    ///
+    /// Called only from the watchdog, which is a single loop that awaits this
+    /// before going round again. That is what makes one rebuild at a time true
+    /// rather than hoped for.
     private func restartCapture(countingIt counted: Bool) async {
         guard let ring, continuation != nil else { return }
         if counted {
@@ -186,6 +215,16 @@ public actor SystemAudioCapture: AudioSource {
             // that eventually gives up, loudly, after a bounded number of tries.
             return
         }
+    }
+
+    /// Whether the aggregate is running at a rate other than the one every
+    /// buffer is being stamped with. Polled rather than listened for: the rate
+    /// can move without the default device changing, and reading one property
+    /// twice a second costs nothing next to a track recorded at the wrong speed.
+    private func rateMoved() -> Bool {
+        guard let devices else { return false }
+        let now = TapDevices.sampleRate(of: devices.aggregate)
+        return now > 0 && now != devices.rate
     }
 
     private static func now() -> TimeInterval {
@@ -256,6 +295,9 @@ private struct TapDevices: Sendable {
     let tap: AudioObjectID
     let aggregate: AudioObjectID
     let proc: AudioDeviceIOProcID
+    /// What every buffer this built is stamped with, kept so a device that
+    /// moves off it can be noticed.
+    let rate: Double
 
     /// Built on a thread of its own, because creating the I/O procedure blocks
     /// the calling thread until the system has resolved the audio capture
@@ -357,7 +399,12 @@ private struct TapDevices: Sendable {
         guard rate > 0 else {
             AudioHardwareDestroyAggregateDevice(aggregate)
             AudioHardwareDestroyProcessTap(tap)
-            throw SystemAudioCapture.TapUnavailable(status: noErr, stage: "format")
+            throw SystemAudioCapture.TapUnavailable(status: noErr, stage: "rate")
+        }
+        guard deliversInterleavedFloat(tap) else {
+            AudioHardwareDestroyAggregateDevice(aggregate)
+            AudioHardwareDestroyProcessTap(tap)
+            throw SystemAudioCapture.TapUnavailable(status: noErr, stage: "layout")
         }
 
         // Everything inside this block runs on the audio thread, where
@@ -379,6 +426,11 @@ private struct TapDevices: Sendable {
             _,
             _ in
             let list = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+            // One buffer, checked when the tap was built. More would be one per
+            // channel, and reading each as a whole buffer would write twice the
+            // frames for one instant with the channels concatenated rather than
+            // mixed. Unreachable, so it stops rather than guesses.
+            guard list.count == 1 else { return }
             // The stamp CoreAudio put on the buffer, not the instant this
             // process saw it, so the two tracks describe one timeline.
             // A stamp of zero is a buffer CoreAudio did not place. Anchoring the
@@ -423,7 +475,33 @@ private struct TapDevices: Sendable {
             throw SystemAudioCapture.TapUnavailable(status: started, stage: "start")
         }
 
-        return TapDevices(tap: tap, aggregate: aggregate, proc: proc)
+        return TapDevices(tap: tap, aggregate: aggregate, proc: proc, rate: rate)
+    }
+
+    /// Whether the audio thread will get what it is written to read: one buffer
+    /// of packed 32-bit floats with the channels alternating.
+    ///
+    /// Checked here rather than defended against per buffer, because the audio
+    /// thread is no place to discover a layout it cannot use and dropping every
+    /// buffer there would read as a tap that is merely quiet. Anything else is
+    /// refused where refusing is still cheap and says so.
+    private static func deliversInterleavedFloat(_ tap: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioObjectGetPropertyData(tap, &address, 0, nil, &size, &format) == noErr else {
+            return false
+        }
+
+        let flags = format.mFormatFlags
+        return format.mChannelsPerFrame > 0
+            && format.mBitsPerChannel == 32
+            && flags & kAudioFormatFlagIsFloat != 0
+            && flags & kAudioFormatFlagIsNonInterleaved == 0
     }
 
     /// Ignoring what these report is the point: they are called on the way out,
@@ -484,7 +562,7 @@ private struct TapDevices: Sendable {
     /// twice the speed and half the length, sliding away from the microphone it
     /// is supposed to be interleaved with. Measured, not reasoned about: the
     /// nominal rate was the only one of the three that matched the buffers.
-    private static func sampleRate(of aggregate: AudioObjectID) -> Double {
+    static func sampleRate(of aggregate: AudioObjectID) -> Double {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyNominalSampleRate,
             mScope: kAudioObjectPropertyScopeGlobal,

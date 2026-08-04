@@ -104,7 +104,12 @@ func processNoteHookHonoursTheContract() async throws {
     // there to catch a hook that never ends, not one a loaded machine was slow
     // to start. The hook that hangs sleeps for thirty seconds, so the bound
     // below still means something.
-    let timeout = Duration.seconds(3)
+    //
+    // Three seconds was not generous enough. It passed alone and failed inside
+    // the full suite whenever something else on the machine was busy, which is
+    // a test that reports the load rather than the code. Ten still proves the
+    // timeout, and no longer fails for being run alongside its own suite.
+    let timeout = Duration.seconds(10)
     try await verifyNotePostProcessingContract(timeout: timeout) { behaviour in
         ProcessNoteHook(
             executable: try hookScript(behaviour, in: root),

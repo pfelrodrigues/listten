@@ -230,9 +230,10 @@ enum Entry {
         print("Timeline:     \(String(format: "%.2f", last.end))s")
         print("Peak level:   \(String(format: "%.4f", peak))")
 
-        let gaps = zip(segments, segments.dropFirst())
-            .filter { $1.start - $0.end > 0.05 }
-            .map { String(format: "%.2fs–%.2fs", $0.end, $1.start) }
+        let silences = zip(segments, segments.dropFirst())
+            .map { ($0.end, $1.start) }
+            .filter { $1 - $0 > 0.05 }
+        let gaps = silences.map { String(format: "%.2fs–%.2fs", $0, $1) }
         print("Gaps:         \(gaps.isEmpty ? "none" : gaps.joined(separator: ", "))")
         print("Dropped:      \(dropped) buffer(s)")
         print("Restarts:     \(restarts)")
@@ -251,16 +252,21 @@ enum Entry {
             print("Silence throughout: the device is connected but nothing is reaching it.")
         }
         // The symptom of a rate that is declared but not delivered: buffers
-        // arriving steadily, no gap wide enough to notice, and an hour of
-        // meeting written into half an hour of file. It plays back fast and
-        // slides away from the other track, which no listener would call a
-        // recording. Only worth saying where nothing was missing.
-        if gaps.isEmpty, audioSeconds < last.end * 0.9 {
+        // arriving steadily and an hour of meeting written into half an hour of
+        // file. It plays back fast and slides away from the other track, which
+        // no listener would call a recording.
+        //
+        // Measured against the span the buffers actually cover rather than the
+        // whole timeline, so a device swap in the middle does not excuse a rate
+        // that is wrong: the two failures are separate and a capture can have
+        // both, which is exactly when a diagnosis is worth having.
+        let covered = last.end - silences.reduce(0) { $0 + ($1.1 - $1.0) }
+        if covered > 0, audioSeconds < covered * 0.9 {
             print(
                 "The audio is shorter than the span it covers: "
                     + String(format: "%.2f", audioSeconds) + "s of samples over "
-                    + String(format: "%.2f", last.end)
-                    + "s. The device is not running at the rate it reports."
+                    + String(format: "%.2f", covered)
+                    + "s of recording. The device is not running at the rate it reports."
             )
         }
     }
