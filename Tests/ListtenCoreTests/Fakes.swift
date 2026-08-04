@@ -343,3 +343,28 @@ actor StoreThatRefusesToSave: SessionStoring {
         UnfinishedSessions(sessions: stored.values.filter { !$0.state.isTerminal })
     }
 }
+
+actor InMemoryTranscripts: TranscriptStoring {
+    struct Unreadable: Error {
+        let id: String
+    }
+
+    private var stored: [String: CorrectedTranscript] = [:]
+    private var corrupted: Set<String> = []
+
+    /// What a half-written file on disk looks like from here, so the rule that a
+    /// damaged transcript is refused rather than read as absent is one both
+    /// implementations answer to.
+    func corrupt(_ sessionID: String) {
+        corrupted.insert(sessionID)
+    }
+
+    func save(_ transcript: CorrectedTranscript, for sessionID: String) async throws {
+        stored[sessionID] = transcript
+    }
+
+    func load(for sessionID: String) async throws -> CorrectedTranscript? {
+        guard !corrupted.contains(sessionID) else { throw Unreadable(id: sessionID) }
+        return stored[sessionID]
+    }
+}

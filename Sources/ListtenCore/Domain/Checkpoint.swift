@@ -6,6 +6,10 @@ import Foundation
 public enum PipelineStep: Sendable, Equatable, Codable {
     case closingSegment(track: Track, index: Int)
     case transcribingChunk(index: Int)
+    /// One segment file turned into lines. Named by the file rather than by a
+    /// chunk number so a resumed run redoes exactly the one it died inside.
+    case transcribingSegment(track: Track, index: Int)
+    case writingNote
 }
 
 /// One end of a step, written around the work rather than after it: the intent

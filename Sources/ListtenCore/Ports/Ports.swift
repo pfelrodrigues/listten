@@ -173,11 +173,15 @@ public struct SegmentFile: Sendable, Equatable {
     public let track: Track
     public let index: Int
     public let duration: TimeInterval
+    /// Where it is, so a caller that has to read it — transcription — does not
+    /// have to know the layout that wrote it.
+    public let url: URL
 
-    public init(track: Track, index: Int, duration: TimeInterval) {
+    public init(track: Track, index: Int, duration: TimeInterval, url: URL) {
         self.track = track
         self.index = index
         self.duration = duration
+        self.url = url
     }
 }
 
@@ -188,4 +192,27 @@ public struct SegmentFile: Sendable, Equatable {
 /// it rather than trusting the log to have been faster than the crash.
 public protocol RecordedAudio: Sendable {
     func segments(for sessionID: String) async throws -> [SegmentFile]
+}
+
+/// Where a session's transcripts are kept.
+///
+/// Both of them: the raw one the engine produced and the corrected one a note is
+/// written from. Correction is derived, never destructive, and a store that only
+/// held the corrected one would make that sentence false the first time a
+/// glossary entry was wrong.
+///
+/// Held to these by `verifyTranscriptStoringContract`:
+///
+/// - What was saved comes back whole, both transcripts, lines and instants
+///   included.
+/// - A session nothing was saved for loads as nil. Absence is not an empty
+///   transcript: a caller told a meeting produced no words would write the note
+///   and close the session, and the words would be gone.
+/// - Sessions do not see each other, and saving again for one replaces only
+///   that one.
+/// - A transcript that exists and cannot be read throws rather than loading as
+///   nil, for the same reason: nil means nothing was ever made.
+public protocol TranscriptStoring: Sendable {
+    func save(_ transcript: CorrectedTranscript, for sessionID: String) async throws
+    func load(for sessionID: String) async throws -> CorrectedTranscript?
 }

@@ -24,7 +24,8 @@ public struct SegmentFiles: RecordedAudio {
                 SegmentFile(
                     track: named.track,
                     index: named.index,
-                    duration: try duration(of: directory.appending(path: named.name))
+                    duration: try duration(of: directory.appending(path: named.name)),
+                    url: directory.appending(path: named.name)
                 )
             }
     }

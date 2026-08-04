@@ -91,11 +91,18 @@ public struct MarkdownNoteWriter: NoteWriting {
             // lines into one paragraph and a transcript is not a paragraph.
             section(
                 "Transcript",
-                note.transcript.lines.map { "**\($0.speaker):** \($0.text)" },
+                note.transcript.lines.map(Self.utterance),
                 separatedBy: "\n\n"
             ),
         ]
         return sections.filter { !$0.isEmpty }.joined(separator: "\n\n") + "\n"
+    }
+
+    /// No speaker means no prefix. The only backend that exists declares no
+    /// diarization, so its every line carries an empty speaker, and prefixing
+    /// those would render an entire real transcript as "**:** text".
+    private static func utterance(_ line: TranscriptLine) -> String {
+        line.speaker.isEmpty ? line.text : "**\(line.speaker):** \(line.text)"
     }
 
     /// A heading over nothing is left out: an empty section reads as a note that

@@ -162,3 +162,23 @@ func rewritingASessionReplacesItsNote() async throws {
             == [MarkdownNoteWriter.keptFileName]
     )
 }
+
+/// The only transcription backend that exists declares no diarization, and the
+/// port then requires every line to carry an empty speaker. Prefixing those
+/// would render a whole real transcript as "**:** text".
+@Test("a line with no speaker is written without a speaker prefix")
+func anUnattributedLineHasNoPrefix() throws {
+    let note = MeetingNote(
+        title: "Weekly sync",
+        summary: "",
+        actionItems: [],
+        transcript: Transcript(lines: [
+            try TranscriptLine(speaker: "", start: 0, end: 2, text: "Shall we start?")
+        ])
+    )
+
+    let rendered = MarkdownNoteWriter.markdown(for: note)
+
+    #expect(rendered.contains("Shall we start?"))
+    #expect(!rendered.contains("**:**"), "rendered \(rendered)")
+}
