@@ -114,9 +114,21 @@ public struct SpeechLiveTranscription: LiveTranscribing {
                             else { continue }
                             feeding.yield(AnalyzerInput(buffer: resampled))
                         case .settle:
-                            // Issued from the task that feeds it, so it cannot
-                            // overtake the audio it is meant to settle.
-                            try await analyzer.finalize(through: nil)
+                            // Bounded, because it has been measured not to
+                            // return: on a real recording, asked to settle over
+                            // a stretch the analyser had nothing volatile for,
+                            // `finalize` never came back, and since this is the
+                            // task that also feeds the analyser the whole track
+                            // stopped — the recording hung on the way out with
+                            // its audio safe and the process alive.
+                            //
+                            // Giving up on one settle costs the lines it would
+                            // have closed, which the next settle closes instead.
+                            // Waiting forever costs the meeting.
+                            //
+                            // Issued from the feeding task on purpose, so a
+                            // settle cannot overtake the audio it settles.
+                            await Self.settling(analyzer)
                         }
                     }
 
@@ -130,6 +142,30 @@ public struct SpeechLiveTranscription: LiveTranscribing {
                 }
             }
             continuation.onTermination = { _ in work.cancel() }
+        }
+    }
+
+    /// How long a settle is given before the meeting goes on without it. Long
+    /// enough that a slow one still lands, short next to the five seconds
+    /// between them.
+    private static let settleTimeout = Duration.seconds(3)
+
+    private static func settling(_ analyzer: SpeechAnalyzer) async {
+        let finalizing = Task { try await analyzer.finalize(through: nil) }
+        let timeout = Task {
+            try await Task.sleep(for: settleTimeout)
+            finalizing.cancel()
+        }
+        defer { timeout.cancel() }
+        // A settle that failed is not a transcription that failed: the lines it
+        // would have closed are closed by the next one, or by the finalize that
+        // ends the stream. Written as do/catch rather than swallowed in one
+        // word, which this module does not allow: discarding a failure has to
+        // be something a reader sees a reason for.
+        do {
+            try await finalizing.value
+        } catch {
+            return
         }
     }
 
