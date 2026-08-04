@@ -30,6 +30,32 @@ enum ChannelMixdown {
             destination[frame] = sum * scale
         }
     }
+
+    /// The same fold over one buffer whose channels alternate sample by sample,
+    /// which is the layout a CoreAudio process tap delivers. Reading it as if
+    /// the channels were separate would take the left half of the buffer and
+    /// call it the recording: audio that plays and transcribes as nonsense
+    /// rather than failing outright.
+    static func mix(
+        interleaved samples: UnsafePointer<Float>,
+        channels count: Int,
+        frames: Int,
+        into destination: UnsafeMutablePointer<Float>
+    ) {
+        guard count > 1 else {
+            destination.update(from: samples, count: frames)
+            return
+        }
+
+        let scale = 1 / Float(count)
+        for frame in 0..<frames {
+            var sum: Float = 0
+            for channel in 0..<count {
+                sum += samples[frame * count + channel]
+            }
+            destination[frame] = sum * scale
+        }
+    }
 }
 
 /// Owns the buffer the tap folds into, so it is allocated once and freed once.

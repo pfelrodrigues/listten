@@ -35,6 +35,9 @@ enum Entry {
                 seconds: rest.first.flatMap(Double.init) ?? 5,
                 writingTo: rest.dropFirst().first.map { URL(filePath: $0) }
             )
+        case "tap":
+            let rest = Array(args.dropFirst())
+            captureFromSystem(seconds: rest.first.flatMap(Double.init) ?? 5)
         default:
             FileHandle.standardError.write(Data("unknown command: \(args[0])\n".utf8))
             exit(64)
@@ -97,20 +100,72 @@ enum Entry {
         }
     }
 
+    /// The system track on its own, which is what the process tap is for: play
+    /// something while it runs, and the peak level is the whole verdict. Unlike
+    /// the microphone, a tap delivers buffers through silence, so no buffers at
+    /// all means the tap is not running rather than that the room is quiet.
+    ///
+    /// Run inside a running application rather than as a plain command, because
+    /// the first tap on a machine blocks until the user has answered the audio
+    /// capture prompt, and the system has nowhere to show that prompt to a
+    /// process with no application behind it: measured, the request simply never
+    /// returns. The agent this ships as has one, so this is what the product
+    /// does rather than a concession to testing.
+    @MainActor
+    private static func captureFromSystem(seconds: Double) -> Never {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+
+        Task.detached {
+            let tap = SystemAudioCapture()
+            print(
+                "Tapping system audio for \(seconds)s. Play something. "
+                    + "Grant access if macOS asks."
+            )
+            await reportBuffers(
+                seconds: seconds,
+                track: .system,
+                source: tap,
+                dropped: { await tap.droppedBuffers },
+                restarts: { await tap.restarts }
+            )
+            exit(0)
+        }
+
+        app.run()
+        exit(0)
+    }
+
     private static func reportBuffers(seconds: Double) async {
         let microphone = MicrophoneCapture()
+        print("Capturing for \(seconds)s. Grant microphone access if macOS asks.")
+        await reportBuffers(
+            seconds: seconds,
+            track: .microphone,
+            source: microphone,
+            dropped: { await microphone.droppedBuffers },
+            restarts: { await microphone.restarts }
+        )
+    }
+
+    private static func reportBuffers(
+        seconds: Double,
+        track: Track,
+        source: some AudioSource,
+        dropped: @Sendable () async -> Int,
+        restarts: @Sendable () async -> Int
+    ) async {
         let stream: AsyncStream<CapturedAudio>
         do {
-            stream = try await microphone.start()
+            stream = try await source.start()
         } catch {
             FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
             exit(1)
         }
 
-        print("Capturing for \(seconds)s. Grant microphone access if macOS asks.")
         let stopper = Task {
             try await Task.sleep(for: .seconds(seconds))
-            await microphone.stop()
+            await source.stop()
         }
 
         let began = Date()
@@ -125,7 +180,7 @@ enum Entry {
                 segments.append(
                     try anchor.segment(
                         index: segments.count,
-                        track: .microphone,
+                        track: track,
                         hostTime: audio.hostTime,
                         frames: audio.frames,
                         sampleRate: audio.sampleRate
@@ -143,8 +198,8 @@ enum Entry {
             segments: segments,
             sampleRate: rate,
             peak: loudest,
-            dropped: await microphone.droppedBuffers,
-            restarts: await microphone.restarts,
+            dropped: await dropped(),
+            restarts: await restarts(),
             // Measured, not inferred: silence at the end is a quiet moment, and
             // a stream that stopped before its time is a lost recording.
             cutShortBy: seconds - Date().timeIntervalSince(began)
@@ -195,6 +250,19 @@ enum Entry {
         if peak == 0 {
             print("Silence throughout: the device is connected but nothing is reaching it.")
         }
+        // The symptom of a rate that is declared but not delivered: buffers
+        // arriving steadily, no gap wide enough to notice, and an hour of
+        // meeting written into half an hour of file. It plays back fast and
+        // slides away from the other track, which no listener would call a
+        // recording. Only worth saying where nothing was missing.
+        if gaps.isEmpty, audioSeconds < last.end * 0.9 {
+            print(
+                "The audio is shorter than the span it covers: "
+                    + String(format: "%.2f", audioSeconds) + "s of samples over "
+                    + String(format: "%.2f", last.end)
+                    + "s. The device is not running at the rate it reports."
+            )
+        }
     }
 
     @MainActor
@@ -231,6 +299,7 @@ enum Entry {
                                          open, the way a launch would
               listten capture [seconds] [directory]
                                          raw microphone check, no session
+              listten tap [seconds]      raw system audio check, no session
 
             Options:
               -v, --version   print the version

@@ -13,7 +13,7 @@ enum Composition {
             minimumDuration: 1,
             capture: { sessionID in
                 SegmentedCapture(
-                    sources: [.microphone: MicrophoneCapture()],
+                    sources: [.microphone: MicrophoneCapture(), .system: SystemAudioCapture()],
                     directory: root.appending(path: sessionID).appending(path: "audio"),
                     rotateEvery: rotateEvery
                 )
