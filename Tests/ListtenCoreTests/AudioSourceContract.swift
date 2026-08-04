@@ -83,6 +83,18 @@ func microphoneHonoursTheContract() async throws {
     try await verifyAudioSourceContract({ MicrophoneCapture() }, expectingAudio: false)
 }
 
+/// Held to more than the microphone is: a tap delivers buffers through silence,
+/// so nothing arriving is a fault rather than a quiet room. Needs the audio
+/// capture permission granted to whatever runs the tests, so it is opt-in with
+/// the rest of the hardware.
+@Test(
+    "the system tap honours the same contract as the fake",
+    .enabled(if: ProcessInfo.processInfo.environment["LISTTEN_AUDIO_HARDWARE"] == "1")
+)
+func systemTapHonoursTheContract() async throws {
+    try await verifyAudioSourceContract({ SystemAudioCapture() }, expectingAudio: true)
+}
+
 private func drained(_ stream: AsyncStream<CapturedAudio>) async -> [CapturedAudio] {
     var received: [CapturedAudio] = []
     for await audio in stream {

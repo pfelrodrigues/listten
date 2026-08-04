@@ -37,7 +37,7 @@ enum Recording {
 
         let step = PerformStep(progress: SessionProgressLogs(root: root))
         let capture = SegmentedCapture(
-            sources: [.microphone: MicrophoneCapture()],
+            sources: [.microphone: MicrophoneCapture(), .system: SystemAudioCapture()],
             directory: directory.appending(path: "audio"),
             rotateEvery: rotateEvery
         )
