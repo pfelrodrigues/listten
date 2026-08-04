@@ -45,10 +45,20 @@ enum Composition {
             ]
             let backend = await SpeechLiveTranscription.installed()
 
-            // No model for this language means no live transcript, and a
-            // capture byte-identical to the one before it existed. The live
-            // path is additive and switched off by absence.
-            guard backend.capabilities.languages.contains(language) else {
+            // Off unless asked for, until #92 is fixed: on a real recording the
+            // analyser did not finish when the audio ended, and a menu bar agent
+            // that never lets a session close is worse than one without a live
+            // transcript. Everything else this path is made of is exercised by
+            // the suite either way, and turning it on is one variable.
+            //
+            // No model for this language is the other way it is off, and a
+            // capture with no sink is byte-identical to the one before any of
+            // this existed: the live path is additive and switched off by
+            // absence.
+            guard
+                ProcessInfo.processInfo.environment["LISTTEN_LIVE"] == "1",
+                backend.capabilities.languages.contains(language)
+            else {
                 return ArmedRecording(
                     capture: SegmentedCapture(
                         sources: sources,
